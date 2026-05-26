@@ -5,9 +5,9 @@ import yfinance as yf
 import requests
 from sklearn.ensemble import RandomForestClassifier
 
-st.set_page_config(page_title="最終回測勝率系統", layout="wide")
+st.set_page_config(page_title="實盤交易終極版", layout="wide")
 
-st.title("🏛️ AI回測勝率 + 市場溫度 最終版系統")
+st.title("🏛️ 實盤交易決策終極系統（Production Engine）")
 
 top_n = st.slider("顯示前幾名", 5, 20, 10)
 
@@ -22,16 +22,17 @@ def get_stocks():
 
 
 # =========================
-# 🌡️ 市場溫度
+# 🌡️ 市場風險開關（核心）
 # =========================
-def market_heat(stocks):
+def market_regime(stocks):
 
     up = 0
     total = 0
 
-    for s in stocks[:50]:
+    for s in stocks[:40]:
         try:
             df = yf.download(s, period="1mo", progress=False)
+
             if df is None or df.empty:
                 continue
 
@@ -51,17 +52,20 @@ def market_heat(stocks):
     ratio = up / total if total > 0 else 0
 
     if ratio > 0.6:
-        return "🟢 多頭市場"
+        return "🟢 多頭（可積極）", 1.2
     elif ratio > 0.45:
-        return "🟡 盤整市場"
+        return "🟡 盤整（保守）", 1.0
     else:
-        return "🔴 空頭市場"
+        return "🔴 空頭（防守）", 0.7
 
 
 # =========================
-# 📊 特徵 + 回測標籤
+# 📊 特徵工程
 # =========================
-def build_data(df):
+def features(df):
+
+    if df is None or df.empty or len(df) < 60:
+        return None
 
     df = df.copy()
 
@@ -71,25 +75,25 @@ def build_data(df):
 
     df["bias"] = (df["Close"] - df["ma20"]) / df["ma20"]
 
-    # 🎯 未來5日報酬
-    df["future"] = df["Close"].shift(-5) / df["Close"] - 1
+    df = df.dropna()
 
-    # 👉 勝負標籤
+    if len(df) < 50:
+        return None
+
+    X = df[["bias", "Volume", "vol_ma", "ma20", "ma60"]]
+
+    df["future"] = df["Close"].shift(-5) / df["Close"] - 1
     df["label"] = (df["future"] > 0).astype(int)
 
     df = df.dropna()
 
-    if len(df) < 80:
-        return None
-
-    X = df[["bias", "Volume", "vol_ma", "ma20", "ma60"]]
     y = df["label"]
 
-    return X, y, df
+    return X, y
 
 
 # =========================
-# 🧠 AI模型
+# 🤖 AI模型
 # =========================
 def train_model(X, y):
 
@@ -119,26 +123,39 @@ def predict(model, df):
     df = df.dropna()
 
     if len(df) == 0:
-        return None
+        return 0.5
 
     latest = df[["bias", "Volume", "vol_ma", "ma20", "ma60"]].iloc[-1]
 
-    prob = model.predict_proba([latest])[0][1]
+    return model.predict_proba([latest])[0][1]
 
-    return prob
+
+# =========================
+# 🧠 最終決策引擎（核心）
+# =========================
+def decision(prob, regime_factor):
+
+    score = prob * 100 * regime_factor
+
+    if score >= 75:
+        return "🟢 強勢進場"
+    elif score >= 60:
+        return "🟡 觀察等待"
+    else:
+        return "🔴 不交易"
 
 
 # =========================
 # 🚀 主程式
 # =========================
-if st.button("🚀 開始最終回測系統"):
+if st.button("🚀 啟動實盤決策系統"):
 
     stocks = get_stocks()
-    stocks = stocks[:120]   # ⚡ 控制速度
+    stocks = stocks[:120]
 
-    heat = market_heat(stocks)
+    regime, factor = market_regime(stocks)
 
-    st.subheader(f"🌡️ 市場狀態：{heat}")
+    st.subheader(f"🌡️ 市場狀態：{regime}")
 
     X_all = []
     y_all = []
@@ -148,19 +165,19 @@ if st.button("🚀 開始最終回測系統"):
     progress = st.progress(0)
 
     # =========================
-    # 🧠 建模型資料
+    # 🧠 建模
     # =========================
     for i, s in enumerate(stocks):
 
         try:
             df = yf.download(s, period="6mo", progress=False)
 
-            data = build_data(df)
+            f = features(df)
 
-            if data is None:
+            if f is None:
                 continue
 
-            X, y, raw = data
+            X, y = f
 
             X_all.append(X)
             y_all.append(y)
@@ -171,7 +188,7 @@ if st.button("🚀 開始最終回測系統"):
         progress.progress((i + 1) / len(stocks))
 
     if len(X_all) == 0:
-        st.error("❌ 無法建立模型")
+        st.error("❌ 無法建立模型（資料不足）")
         st.stop()
 
     X_train = pd.concat(X_all)
@@ -179,7 +196,7 @@ if st.button("🚀 開始最終回測系統"):
 
     model = train_model(X_train, y_train)
 
-    st.success("✅ AI模型完成訓練")
+    st.success("✅ 模型建立完成")
 
     # =========================
     # 📊 預測
@@ -189,17 +206,14 @@ if st.button("🚀 開始最終回測系統"):
         try:
             df = yf.download(s, period="6mo", progress=False)
 
-            if df is None or df.empty:
-                continue
-
             prob = predict(model, df)
 
-            if prob is None:
-                continue
+            final = decision(prob, factor)
 
             results.append({
                 "股票": s,
-                "AI勝率": round(prob * 100, 2)
+                "訊號": final,
+                "勝率": round(prob * 100, 2)
             })
 
         except:
@@ -209,15 +223,8 @@ if st.button("🚀 開始最終回測系統"):
 
     df = pd.DataFrame(results)
 
-    if df.empty:
-        st.warning("沒有結果")
-    else:
+    st.subheader("🟢 強勢標的")
+    st.dataframe(df.sort_values("勝率", ascending=False).head(top_n))
 
-        df = df.sort_values("AI勝率", ascending=False)
-
-        st.subheader("🟢 高勝率股票")
-
-        st.dataframe(df.head(top_n))
-
-        st.subheader("📊 勝率分布")
-        st.bar_chart(df.set_index("股票")["AI勝率"])
+    st.subheader("📊 分布")
+    st.bar_chart(df.set_index("股票")["勝率"])
