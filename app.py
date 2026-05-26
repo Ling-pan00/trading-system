@@ -2,16 +2,15 @@ import streamlit as st
 import pandas as pd
 import yfinance as yf
 import twstock
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 st.set_page_config(
-    page_title="台股月線負乖離排行",
+    page_title="台股月線負乖離排行（超高速版）",
     layout="wide"
 )
 
-st.title("台股月線負乖離排行（高速版）")
+st.title("台股月線負乖離排行（超高速版）")
 
-st.markdown("篩選條件：股價低於月線 8%（含）以上")
+st.markdown("條件：股價低於月線 8%（含）以上")
 
 # 負乖離設定
 bias_limit = st.slider(
@@ -31,7 +30,7 @@ def get_stock_list():
 
         if info.market in ["上市", "上櫃"]:
 
-            # 避免ETF、權證
+            # 排除ETF、權證
             if len(code) == 4 and code.isdigit():
 
                 ticker = (
@@ -53,107 +52,123 @@ stock_list = get_stock_list()
 
 st.write(f"股票總數：{len(stock_list)}")
 
-# 單檔掃描
-def scan_stock(stock):
+# 建立 ticker 對照
+ticker_map = {
+    stock["ticker"]: {
+        "code": stock["code"],
+        "name": stock["name"]
+    }
+    for stock in stock_list
+}
 
-    code = stock["code"]
-    name = stock["name"]
-    ticker = stock["ticker"]
+tickers = list(ticker_map.keys())
 
-    try:
-
-        df = yf.download(
-            ticker,
-            period="3mo",
-            interval="1d",
-            progress=False,
-            auto_adjust=False,
-            threads=False
-        )
-
-        if df.empty or len(df) < 20:
-            return None
-
-        close_series = df["Close"]
-
-        # 避免多欄位
-        if isinstance(close_series, pd.DataFrame):
-            close_series = close_series.iloc[:, 0]
-
-        ma20 = close_series.rolling(20).mean().iloc[-1]
-        close = float(close_series.iloc[-1])
-
-        if pd.isna(ma20):
-            return None
-
-        bias = ((close - ma20) / ma20) * 100
-
-        if bias <= bias_limit:
-
-            return {
-                "股票代號": code,
-                "股票名稱": name,
-                "收盤價": round(close, 2),
-                "月線MA20": round(ma20, 2),
-                "乖離率(%)": round(bias, 2)
-            }
-
-    except Exception:
-        return None
-
-    return None
-
-
-# 開始篩選
-if st.button("開始高速掃描"):
+# 開始掃描
+if st.button("開始超高速掃描"):
 
     results = []
 
-    progress_bar = st.progress(0)
-    status_text = st.empty()
+    progress = st.progress(0)
+    status = st.empty()
 
-    total = len(stock_list)
-    completed = 0
+    # 每批抓幾檔
+    batch_size = 200
 
-    # 高速多執行緒
-    MAX_WORKERS = 20
+    total_batches = (
+        len(tickers) + batch_size - 1
+    ) // batch_size
 
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+    for batch_idx in range(total_batches):
 
-        futures = {
-            executor.submit(scan_stock, stock): stock
-            for stock in stock_list
-        }
+        start = batch_idx * batch_size
+        end = start + batch_size
 
-        for future in as_completed(futures):
+        batch_tickers = tickers[start:end]
 
-            result = future.result()
+        status.text(
+            f"下載資料中：第 {batch_idx+1}/{total_batches} 批"
+        )
 
-            if result:
-                results.append(result)
+        try:
 
-            completed += 1
+            # 一次下載整批
+            data = yf.download(
+                tickers=batch_tickers,
+                period="3mo",
+                interval="1d",
+                group_by="ticker",
+                auto_adjust=False,
+                progress=False,
+                threads=True
+            )
 
-            progress_bar.progress(completed / total)
+            for ticker in batch_tickers:
 
-            if completed % 20 == 0:
-                status_text.text(
-                    f"已掃描 {completed}/{total}"
-                )
+                try:
 
-    status_text.text("掃描完成")
+                    # 個股資料
+                    stock_data = data[ticker]
 
+                    if stock_data.empty:
+                        continue
+
+                    close = stock_data["Close"]
+
+                    if len(close) < 20:
+                        continue
+
+                    ma20 = close.rolling(20).mean().iloc[-1]
+
+                    latest_close = float(close.iloc[-1])
+
+                    if pd.isna(ma20):
+                        continue
+
+                    # 乖離率
+                    bias = (
+                        (latest_close - ma20)
+                        / ma20
+                    ) * 100
+
+                    # 篩選
+                    if bias <= bias_limit:
+
+                        info = ticker_map[ticker]
+
+                        results.append({
+                            "股票代號": info["code"],
+                            "股票名稱": info["name"],
+                            "收盤價": round(latest_close, 2),
+                            "月線MA20": round(ma20, 2),
+                            "乖離率(%)": round(bias, 2)
+                        })
+
+                except Exception:
+                    continue
+
+        except Exception:
+            continue
+
+        progress.progress(
+            (batch_idx + 1) / total_batches
+        )
+
+    status.text("掃描完成")
+
+    # 顯示結果
     if results:
 
         result_df = pd.DataFrame(results)
 
-        # 負乖離最大排前面
+        # 排序
         result_df = result_df.sort_values(
             by="乖離率(%)",
             ascending=True
         )
 
-        st.success(f"找到 {len(result_df)} 檔符合條件股票")
+        st.success(
+            f"找到 {len(result_df)} 檔符合條件股票"
+        )
 
         st.dataframe(
             result_df,
@@ -161,7 +176,7 @@ if st.button("開始高速掃描"):
             height=700
         )
 
-        # 下載CSV
+        # CSV下載
         csv = result_df.to_csv(
             index=False
         ).encode("utf-8-sig")
