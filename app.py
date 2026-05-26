@@ -3,21 +3,27 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 
-st.set_page_config(page_title="台股策略回測系統", layout="wide")
+st.set_page_config(page_title="穩定選股系統", layout="wide")
 
-st.title("📊 台股策略回測系統（穩定終極版）")
+st.title("🏛️ 穩定正式選股系統（Professional Stable Edition）")
 
-stocks = ["2330.TW", "2317.TW", "2454.TW", "2382.TW"]
+# =========================
+# 📌 股票池（穩定版：200檔內）
+# =========================
+stocks = [
+    "2330.TW","2317.TW","2454.TW","2382.TW","2303.TW",
+    "2308.TW","2412.TW","2881.TW","2882.TW","2891.TW",
+    "2886.TW","2603.TW","2615.TW","2002.TW","1101.TW",
+    "1301.TW","1303.TW","1326.TW","2207.TW","2357.TW"
+]
 
-holding_days = st.slider("持有天數", 1, 10, 5)
-stop_loss = st.slider("停損 (%)", -10, -1, -2)
-take_profit = st.slider("停利 (%)", 1, 20, 5)
+top_n = st.slider("顯示前幾名", 5, 20, 10)
 
 
 # =========================
-# 🧠 安全數值轉換（核心）
+# 🧠 安全轉換
 # =========================
-def safe_float(x):
+def safe(x):
     try:
         return float(np.array(x).item())
     except:
@@ -25,153 +31,100 @@ def safe_float(x):
 
 
 # =========================
-# 📉 REVERSAL（穩定版）
+# 📊 技術計分（穩定核心）
 # =========================
-def reversal(df, i):
+def score(df):
 
-    if i < 60:
-        return False
+    if df is None or df.empty or len(df) < 120:
+        return None
 
-    ma20 = df["Close"].rolling(20).mean().iloc[i]
+    i = len(df) - 1
 
-    try:
-        ma20 = float(ma20)
-    except:
-        return False
-
-    close = safe_float(df["Close"].iloc[i])
+    close = safe(df["Close"].iloc[i])
+    ma20 = safe(df["Close"].rolling(20).mean().iloc[i])
+    vol = safe(df["Volume"].iloc[i])
+    vol_ma = safe(df["Volume"].rolling(5).mean().iloc[i])
 
     if np.isnan(close) or np.isnan(ma20) or ma20 == 0:
-        return False
+        return None
 
     bias = ((close - ma20) / ma20) * 100
 
-    cond1 = -20 < bias < -8
-    cond2 = df["Low"].iloc[i] >= df["Low"].iloc[i - 1]
-    cond3 = df["Volume"].iloc[i] > df["Volume"].rolling(5).mean().iloc[i]
+    score = 0
 
-    return cond1 and cond2 and cond3
+    # 📉 跌深反彈
+    if -20 < bias < -8:
+        score += 30
+
+    # 📊 量能
+    if vol > vol_ma:
+        score += 20
+
+    # 📈 趨勢
+    if close > df["Close"].rolling(60).mean().iloc[i]:
+        score += 20
+
+    # 🚀 突破
+    if close > df["High"].rolling(20).max().iloc[i-1]:
+        score += 30
+
+    return {
+        "score": score,
+        "bias": bias,
+        "price": close
+    }
 
 
 # =========================
-# 📈 TREND（穩定版）
+# 🚀 安全下載（防 crash）
 # =========================
-def trend(df, i):
-
-    if i < 60:
-        return False
-
-    high20 = df["High"].rolling(20).max().iloc[i - 1]
-
+def get_data(symbol):
     try:
-        high20 = float(high20)
+        df = yf.download(symbol, period="6mo", progress=False, threads=True)
+
+        if df is None or df.empty or len(df) < 120:
+            return None
+
+        return df
+
     except:
-        return False
-
-    cond1 = safe_float(df["Close"].iloc[i]) > high20
-    cond2 = df["Volume"].iloc[i] > df["Volume"].rolling(20).mean().iloc[i]
-
-    return cond1 and cond2
+        return None
 
 
 # =========================
-# 🚀 回測主程式
+# 🚀 主程式
 # =========================
-if st.button("🚀 開始回測"):
+if st.button("🚀 開始掃描（穩定版）"):
 
     results = []
     progress = st.progress(0)
 
     for idx, s in enumerate(stocks):
 
-        df = yf.download(s, period="1y", progress=False)
+        df = get_data(s)
 
-        if df is None or df.empty or len(df) < 120:
-            continue
+        r = score(df)
 
-        for i in range(60, len(df) - holding_days):
-
-            entry_price = safe_float(df["Close"].iloc[i])
-
-            if np.isnan(entry_price):
-                continue
-
-            exit_price = None
-
-            # =========================
-            # 出場邏輯（停利 / 停損）
-            # =========================
-            for j in range(i + 1, i + holding_days):
-
-                high = safe_float(df["High"].iloc[j])
-                low = safe_float(df["Low"].iloc[j])
-
-                if np.isnan(high) or np.isnan(low):
-                    continue
-
-                # 停利
-                if (high - entry_price) / entry_price * 100 >= take_profit:
-                    exit_price = entry_price * (1 + take_profit / 100)
-                    break
-
-                # 停損
-                if (low - entry_price) / entry_price * 100 <= stop_loss:
-                    exit_price = entry_price * (1 + stop_loss / 100)
-                    break
-
-            if exit_price is None:
-                exit_price = safe_float(df["Close"].iloc[i + holding_days])
-
-            if np.isnan(exit_price):
-                continue
-
-            ret = (exit_price - entry_price) / entry_price * 100
-
-            # =========================
-            # REVERSAL
-            # =========================
-            if reversal(df, i):
-                results.append({
-                    "股票": s,
-                    "策略": "REVERSAL",
-                    "進場": round(entry_price, 2),
-                    "出場": round(exit_price, 2),
-                    "報酬%": round(ret, 2)
-                })
-
-            # =========================
-            # TREND
-            # =========================
-            if trend(df, i):
-                results.append({
-                    "股票": s,
-                    "策略": "TREND",
-                    "進場": round(entry_price, 2),
-                    "出場": round(exit_price, 2),
-                    "報酬%": round(ret, 2)
-                })
+        if r:
+            results.append({
+                "股票": s,
+                "分數": r["score"],
+                "乖離%": round(r["bias"], 2),
+                "收盤價": round(r["price"], 2)
+            })
 
         progress.progress((idx + 1) / len(stocks))
 
     df_result = pd.DataFrame(results)
 
     if df_result.empty:
-        st.warning("沒有交易訊號")
+        st.warning("今天沒有符合條件的股票")
     else:
 
-        st.subheader("📋 回測明細")
-        st.dataframe(df_result)
+        df_result = df_result.sort_values("分數", ascending=False)
 
-        st.subheader("📊 策略統計")
+        st.subheader("🏆 Top 選股結果")
+        st.dataframe(df_result.head(top_n))
 
-        summary = df_result.groupby("策略")["報酬%"].agg([
-            "count",
-            "mean",
-            lambda x: (x > 0).mean()
-        ])
-
-        summary.columns = ["交易次數", "平均報酬%", "勝率"]
-
-        st.dataframe(summary)
-
-        st.bar_chart(summary["平均報酬%"])
+        st.subheader("📊 分數分布")
+        st.bar_chart(df_result.set_index("股票")["分數"])
