@@ -6,11 +6,13 @@ import requests
 from universe import build_universe
 
 
-st.title("🏛️ 穩定法人 Top10（TWSE純資料版）")
+st.set_page_config(page_title="法人級動態選股", layout="wide")
+
+st.title("🏛️ 百分比動態流動性 Top10 系統")
 
 
 # =========================
-# 📊 直接抓 TWSE 日成交資料
+# 📊 TWSE 日資料（穩定來源）
 # =========================
 def get_twse_data(stock_code):
 
@@ -65,13 +67,26 @@ def score(df):
 
 
 # =========================
+# 🚀 UI 控制（百分比 Universe）
+# =========================
+percentile = st.slider(
+    "📊 流動性百分比（Universe大小）",
+    min_value=0.05,
+    max_value=0.5,
+    value=0.2,
+    step=0.05
+)
+
+
+# =========================
 # 🚀 主程式
 # =========================
-if st.button("🚀 產生 Top10（穩定版）"):
+if st.button("🚀 產生 Top 10（動態市場版）"):
 
-    stocks = build_universe(top_n=200)
+    # 🧠 動態 Universe（核心）
+    stocks = build_universe(percentile=percentile)
 
-    st.write(f"📦 股票池：{len(stocks)}")
+    st.write(f"📦 動態股票池數量：{len(stocks)}")
 
     results = []
 
@@ -99,13 +114,15 @@ if st.button("🚀 產生 Top10（穩定版）"):
     df = pd.DataFrame(results)
 
     if df.empty:
-        st.error("沒有資料（TWSE API異常）")
+        st.error("沒有資料（TWSE API可能異常或市場暫停）")
         st.stop()
 
     df = df.sort_values("Score", ascending=False)
 
-    st.subheader("🔥 Top 10 強勢股（穩定版）")
+    top10 = df.head(10)
 
-    st.dataframe(df.head(10))
+    st.subheader("🔥 Top 10 強勢股（百分比動態版）")
 
-    st.bar_chart(df.head(10).set_index("股票")["Score"])
+    st.dataframe(top10)
+
+    st.bar_chart(top10.set_index("股票")["Score"])
