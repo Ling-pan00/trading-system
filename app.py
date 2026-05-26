@@ -2,154 +2,123 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import requests
+import yfinance as yf
 
-st.set_page_config(page_title="多策略回測系統", layout="wide")
+st.set_page_config(page_title="法人多因子選股系統", layout="wide")
 
-st.title("🏛️ 多策略回測交易系統")
+st.title("🏛️ 法人多因子選股系統")
 
 
 # =========================
-# 📊 台股資料
+# 📊 股票池（穩定 + 排ETF）
 # =========================
-def get_data():
+def get_universe():
 
     url = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
     data = requests.get(url, timeout=10).json()
 
-    df = pd.DataFrame(data)
+    stocks = []
 
-    df["Close"] = pd.to_numeric(df["ClosingPrice"], errors="coerce")
-    df["Volume"] = pd.to_numeric(df["TradeVolume"], errors="coerce")
+    for i in data:
 
-    return df
+        code = i["Code"]
 
+        # ✔ 只保留純股票（排 ETF / 特殊）
+        if not code.isdigit():
+            continue
 
-# =========================
-# 📈 技術指標（簡化版）
-# =========================
-def indicators(price):
+        if len(code) != 4:
+            continue
 
-    ma5 = price.rolling(5).mean()
-    ma20 = price.rolling(20).mean()
+        stocks.append(code + ".TW")
 
-    rsi = 50 + (price.diff().fillna(0))
-
-    return ma5, ma20, rsi
+    return stocks[:80]
 
 
 # =========================
-# 🧠 策略1：趨勢策略
+# 📈 多因子模型
 # =========================
-def strategy_trend(price):
+def alpha_score(df):
 
-    ma5, ma20, _ = indicators(price)
+    try:
+        df = df.copy()
 
-    signal = ma5 > ma20
+        df["ret"] = df["Close"].pct_change()
+        df["ma20"] = df["Close"].rolling(20).mean()
+        df["ma60"] = df["Close"].rolling(60).mean()
 
-    return signal
+        df = df.dropna()
 
+        if len(df) < 60:
+            return 0
 
-# =========================
-# 🧠 策略2：動能策略
-# =========================
-def strategy_momentum(price):
+        momentum = df["Close"].iloc[-1] / df["Close"].iloc[-20] - 1
 
-    return price.pct_change(5) > 0
+        trend = (df["ma20"].iloc[-1] - df["ma60"].iloc[-1]) / df["ma60"].iloc[-1]
 
+        volatility = df["ret"].std()
 
-# =========================
-# 🧠 策略3：反轉策略
-# =========================
-def strategy_mean_reversion(price):
+        volume = df["Volume"].mean() / 1_000_000
 
-    rsi = 50 + price.diff()
+        strength = df["Close"].iloc[-1] / df["Close"].min()
 
-    return rsi < 50
+        score = (
+            momentum * 0.35 +
+            trend * 0.25 +
+            volatility * 0.10 +
+            volume * 0.15 +
+            strength * 0.15
+        )
 
+        return float(score)
 
-# =========================
-# 📊 回測引擎
-# =========================
-def backtest(price, signal):
-
-    returns = price.pct_change().shift(-1)
-
-    strat_ret = returns[signal]
-
-    total_return = (1 + strat_ret.fillna(0)).prod() - 1
-
-    win_rate = (strat_ret > 0).mean()
-
-    volatility = strat_ret.std()
-
-    sharpe = (strat_ret.mean() / (volatility + 1e-9)) * np.sqrt(252)
-
-    max_dd = (strat_ret.cumsum() - strat_ret.cumsum().cummax()).min()
-
-    return {
-        "報酬率": total_return,
-        "勝率": win_rate,
-        "Sharpe": sharpe,
-        "最大回撤": max_dd
-    }
+    except:
+        return 0
 
 
 # =========================
 # 🚀 主程式
 # =========================
-if st.button("🚀 開始多策略回測"):
+if st.button("🚀 開始法人掃描"):
 
-    df = get_data()
+    stocks = get_universe()
+
+    st.write(f"📦 股票池數量：{len(stocks)}")
 
     results = []
 
-    # 只測前50檔（避免太慢）
-    for _, row in df.head(50).iterrows():
+    progress = st.progress(0)
+
+    for i, s in enumerate(stocks):
 
         try:
-            price = pd.Series([float(row["ClosingPrice"])] * 100)
+            df = yf.download(s, period="6mo", progress=False)
 
-            # =========================
-            # 三種策略
-            # =========================
-            trend = strategy_trend(price)
-            mom = strategy_momentum(price)
-            rev = strategy_mean_reversion(price)
+            if df is None or df.empty:
+                continue
 
-            # =========================
-            # 回測
-            # =========================
-            r1 = backtest(price, trend)
-            r2 = backtest(price, mom)
-            r3 = backtest(price, rev)
+            score = alpha_score(df)
 
             results.append({
-                "股票": row["Code"] + ".TW",
-                "Trend Sharpe": r1["Sharpe"],
-                "Momentum Sharpe": r2["Sharpe"],
-                "Reversion Sharpe": r3["Sharpe"],
-                "最佳策略": max(
-                    [("Trend", r1["Sharpe"]),
-                     ("Momentum", r2["Sharpe"]),
-                     ("Reversion", r3["Sharpe"])],
-                    key=lambda x: x[1]
-                )[0]
+                "股票": s,
+                "Alpha": score
             })
 
         except:
             continue
 
-    result_df = pd.DataFrame(results)
+        progress.progress((i + 1) / len(stocks))
 
-    if result_df.empty:
-        result_df = pd.DataFrame([{
-            "股票": "2330.TW",
-            "Trend Sharpe": 0,
-            "Momentum Sharpe": 0,
-            "Reversion Sharpe": 0,
-            "最佳策略": "None"
-        }])
+    df = pd.DataFrame(results)
 
-    st.subheader("📊 策略回測結果")
+    if df.empty:
+        st.warning("沒有資料")
+        st.stop()
 
-    st.dataframe(result_df)
+    df = df.sort_values("Alpha", ascending=False)
+
+    st.subheader("📊 法人多因子排名")
+
+    st.dataframe(df.head(20))
+
+    st.bar_chart(df.set_index("股票")["Alpha"])
