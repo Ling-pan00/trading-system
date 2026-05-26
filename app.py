@@ -6,38 +6,32 @@ import requests
 from universe import build_universe
 
 
-st.title("🏛️ 穩定法人 Top10（TWSE修正版）")
+st.title("🏛️ 穩定法人 Top10（最終穩定版）")
 
 
 # =========================
-# 📊 TWSE 安全抓資料
+# 📊 TWSE 安全資料
 # =========================
-def get_twse_data(stock_code):
+def get_twse_data(stock):
 
     try:
-        code = stock_code.replace(".TW", "")
+        code = stock.replace(".TW", "")
 
         url = "https://www.twse.com.tw/exchangeReport/STOCK_DAY"
-        params = {
-            "stockNo": code,
-            "response": "json"
-        }
+        params = {"stockNo": code, "response": "json"}
 
         r = requests.get(url, params=params, timeout=10)
         data = r.json()
 
-        # 🚨 檢查 API 是否成功
         if data.get("stat") != "OK":
-            return None
-
-        if "data" not in data:
             return None
 
         df = pd.DataFrame(data["data"], columns=data["fields"])
 
-        # 🚨 防止 "-" / 空值
+        # 收盤價安全轉換
         df["close"] = (
             df["收盤價"]
+            .astype(str)
             .str.replace(",", "")
             .replace("-", np.nan)
         )
@@ -52,7 +46,7 @@ def get_twse_data(stock_code):
 
 
 # =========================
-# 🧠 打分模型（簡化穩定版）
+# 🧠 簡化穩定 score
 # =========================
 def score(df):
 
@@ -70,10 +64,9 @@ def score(df):
         if len(df) < 10:
             return None
 
-        momentum = df["close"].iloc[-1] / df["close"].iloc[-5] - 1
-        trend = (df["ma5"].iloc[-1] - df["ma10"].iloc[-1]) / df["ma10"].iloc[-1]
-
-        return momentum * 0.6 + trend * 0.4
+        return (
+            df["close"].iloc[-1] / df["close"].iloc[-5] - 1
+        )
 
     except:
         return None
@@ -99,24 +92,20 @@ if st.button("🚀 產生 Top10"):
         if df is None:
             continue
 
-        s_score = score(df)
+        sc = score(df)
 
-        if s_score is None:
+        if sc is None:
             continue
 
-        results.append({
-            "股票": s,
-            "Score": s_score
-        })
+        results.append({"股票": s, "Score": sc})
 
         progress.progress((i + 1) / len(stocks))
 
     df = pd.DataFrame(results)
 
-    # 🚨 保底機制（關鍵）
+    # 🧠 保底（防空）
     if df.empty:
-        st.warning("TWSE API不穩，啟用保底股票")
-
+        st.warning("啟動保底資料")
         df = pd.DataFrame([
             {"股票": "2330.TW", "Score": 1},
             {"股票": "2317.TW", "Score": 0.9},
@@ -128,5 +117,4 @@ if st.button("🚀 產生 Top10"):
     st.subheader("🔥 Top 10")
 
     st.dataframe(df.head(10))
-
     st.bar_chart(df.head(10).set_index("股票")["Score"])
