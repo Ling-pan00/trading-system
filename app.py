@@ -4,7 +4,7 @@ import pandas as pd
 
 st.set_page_config(page_title="台股策略回測系統", layout="wide")
 
-st.title("📊 台股策略回測系統（穩定版）")
+st.title("📊 台股策略回測系統（穩定修正版）")
 
 stocks = ["2330.TW", "2317.TW", "2454.TW", "2382.TW"]
 
@@ -26,24 +26,26 @@ def reversal(df, i):
     if pd.isna(ma20):
         return False
 
-    bias = ((df["Close"].iloc[i] - ma20) / ma20) * 100
+    close = df["Close"].iloc[i]
+
+    bias = ((close - ma20) / ma20) * 100
 
     cond1 = -20 < bias < -8
-    cond2 = df["Low"].iloc[i] >= df["Low"].iloc[i-1]
+    cond2 = df["Low"].iloc[i] >= df["Low"].iloc[i - 1]
     cond3 = df["Volume"].iloc[i] > df["Volume"].rolling(5).mean().iloc[i]
 
     return cond1 and cond2 and cond3
 
 
 # =========================
-# 📈 TREND（順勢突破）
+# 📈 TREND（突破策略）
 # =========================
 def trend(df, i):
 
     if i < 60:
         return False
 
-    high20 = df["High"].rolling(20).max().iloc[i-1]
+    high20 = df["High"].rolling(20).max().iloc[i - 1]
 
     cond1 = df["Close"].iloc[i] > high20
     cond2 = df["Volume"].iloc[i] > df["Volume"].rolling(20).mean().iloc[i]
@@ -69,14 +71,15 @@ if st.button("🚀 開始回測"):
 
         for i in range(60, len(df) - holding_days):
 
+            # 🔥 關鍵修正：強制轉 float（避免 Series 問題）
             entry_price = float(df["Close"].iloc[i])
 
             exit_price = None
 
             # =========================
-            # 📊 出場邏輯（已修正 float）
+            # 出場邏輯（停利 / 停損）
             # =========================
-            for j in range(i+1, i+holding_days):
+            for j in range(i + 1, i + holding_days):
 
                 high = float(df["High"].iloc[j])
                 low = float(df["Low"].iloc[j])
@@ -91,14 +94,14 @@ if st.button("🚀 開始回測"):
                     exit_price = entry_price * (1 + stop_loss / 100)
                     break
 
-            # 沒觸發就用最後一天
+            # 沒觸發停利停損
             if exit_price is None:
                 exit_price = float(df["Close"].iloc[i + holding_days])
 
             ret = (exit_price - entry_price) / entry_price * 100
 
             # =========================
-            # REVERSAL
+            # REVERSAL 訊號
             # =========================
             if reversal(df, i):
                 results.append({
@@ -110,7 +113,7 @@ if st.button("🚀 開始回測"):
                 })
 
             # =========================
-            # TREND
+            # TREND 訊號
             # =========================
             if trend(df, i):
                 results.append({
