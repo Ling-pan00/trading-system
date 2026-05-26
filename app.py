@@ -1,136 +1,223 @@
 import streamlit as st
-import yfinance as yf
 import pandas as pd
 import numpy as np
+import yfinance as yf
 import requests
+from sklearn.ensemble import RandomForestClassifier
 
-st.set_page_config(page_title="三層訊號選股系統", layout="wide")
+st.set_page_config(page_title="最終回測勝率系統", layout="wide")
 
-st.title("🏛️ 三層訊號選股系統（Professional Signal Engine）")
+st.title("🏛️ AI回測勝率 + 市場溫度 最終版系統")
+
+top_n = st.slider("顯示前幾名", 5, 20, 10)
+
 
 # =========================
-# 📌 股票池（穩定版）
+# 📌 股票池
 # =========================
 def get_stocks():
     url = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
     data = requests.get(url, timeout=10).json()
-
     return [f"{i['Code']}.TW" for i in data]
 
 
 # =========================
-# 🧠 安全數值
+# 🌡️ 市場溫度
 # =========================
-def safe(x):
-    try:
-        return float(np.array(x).item())
-    except:
-        return np.nan
+def market_heat(stocks):
+
+    up = 0
+    total = 0
+
+    for s in stocks[:50]:
+        try:
+            df = yf.download(s, period="1mo", progress=False)
+            if df is None or df.empty:
+                continue
+
+            close = df["Close"].iloc[-1]
+            ma20 = df["Close"].rolling(20).mean().iloc[-1]
+
+            if np.isnan(ma20):
+                continue
+
+            total += 1
+            if close > ma20:
+                up += 1
+
+        except:
+            pass
+
+    ratio = up / total if total > 0 else 0
+
+    if ratio > 0.6:
+        return "🟢 多頭市場"
+    elif ratio > 0.45:
+        return "🟡 盤整市場"
+    else:
+        return "🔴 空頭市場"
 
 
 # =========================
-# 📊 計算指標
+# 📊 特徵 + 回測標籤
 # =========================
-def analyze(df):
+def build_data(df):
 
-    if df is None or df.empty or len(df) < 120:
+    df = df.copy()
+
+    df["ma20"] = df["Close"].rolling(20).mean()
+    df["ma60"] = df["Close"].rolling(60).mean()
+    df["vol_ma"] = df["Volume"].rolling(5).mean()
+
+    df["bias"] = (df["Close"] - df["ma20"]) / df["ma20"]
+
+    # 🎯 未來5日報酬
+    df["future"] = df["Close"].shift(-5) / df["Close"] - 1
+
+    # 👉 勝負標籤
+    df["label"] = (df["future"] > 0).astype(int)
+
+    df = df.dropna()
+
+    if len(df) < 80:
         return None
 
-    i = len(df) - 1
+    X = df[["bias", "Volume", "vol_ma", "ma20", "ma60"]]
+    y = df["label"]
 
-    close = safe(df["Close"].iloc[i])
-    ma20 = safe(df["Close"].rolling(20).mean().iloc[i])
-    ma60 = safe(df["Close"].rolling(60).mean().iloc[i])
-    vol = safe(df["Volume"].iloc[i])
-    vol_ma = safe(df["Volume"].rolling(5).mean().iloc[i])
+    return X, y, df
 
-    if np.isnan(close) or np.isnan(ma20):
+
+# =========================
+# 🧠 AI模型
+# =========================
+def train_model(X, y):
+
+    model = RandomForestClassifier(
+        n_estimators=120,
+        max_depth=6,
+        random_state=42
+    )
+
+    model.fit(X, y)
+
+    return model
+
+
+# =========================
+# 📊 預測勝率
+# =========================
+def predict(model, df):
+
+    df = df.copy()
+
+    df["ma20"] = df["Close"].rolling(20).mean()
+    df["ma60"] = df["Close"].rolling(60).mean()
+    df["vol_ma"] = df["Volume"].rolling(5).mean()
+    df["bias"] = (df["Close"] - df["ma20"]) / df["ma20"]
+
+    df = df.dropna()
+
+    if len(df) == 0:
         return None
 
-    bias = ((close - ma20) / ma20) * 100
+    latest = df[["bias", "Volume", "vol_ma", "ma20", "ma60"]].iloc[-1]
 
-    strength = 0
+    prob = model.predict_proba([latest])[0][1]
 
-    # 📈 趨勢
-    if close > ma60:
-        strength += 2
-
-    # 📊 量能
-    if vol > vol_ma:
-        strength += 1
-
-    # 🚀 突破
-    if close > df["High"].rolling(20).max().iloc[i-1]:
-        strength += 2
-
-    return bias, strength, close
+    return prob
 
 
 # =========================
-# 🧠 三層分類
+# 🚀 主程式
 # =========================
-def classify(bias, strength):
-
-    # 🟢 強勢（已發動）
-    if strength >= 3 and -20 < bias < 10:
-        return "🟢 強勢訊號"
-
-    # 🟡 準備（即將發動）
-    if strength >= 1 and -35 < bias < 20:
-        return "🟡 準備訊號"
-
-    return "🔴 無訊號"
-
-
-# =========================
-# 🚀 掃描
-# =========================
-if st.button("🚀 開始三層掃描"):
+if st.button("🚀 開始最終回測系統"):
 
     stocks = get_stocks()
-    stocks = stocks[:600]  # ⚡ 控制速度（可改）
+    stocks = stocks[:120]   # ⚡ 控制速度
+
+    heat = market_heat(stocks)
+
+    st.subheader(f"🌡️ 市場狀態：{heat}")
+
+    X_all = []
+    y_all = []
 
     results = []
 
     progress = st.progress(0)
 
+    # =========================
+    # 🧠 建模型資料
+    # =========================
     for i, s in enumerate(stocks):
 
         try:
             df = yf.download(s, period="6mo", progress=False)
 
-            r = analyze(df)
+            data = build_data(df)
 
-            if r is None:
+            if data is None:
                 continue
 
-            bias, strength, price = r
-            signal = classify(bias, strength)
+            X, y, raw = data
 
-            results.append({
-                "股票": s,
-                "訊號": signal,
-                "強度": strength,
-                "乖離%": round(bias, 2),
-                "價格": round(price, 2)
-            })
+            X_all.append(X)
+            y_all.append(y)
 
         except:
             pass
 
         progress.progress((i + 1) / len(stocks))
 
+    if len(X_all) == 0:
+        st.error("❌ 無法建立模型")
+        st.stop()
+
+    X_train = pd.concat(X_all)
+    y_train = pd.concat(y_all)
+
+    model = train_model(X_train, y_train)
+
+    st.success("✅ AI模型完成訓練")
+
+    # =========================
+    # 📊 預測
+    # =========================
+    for s in stocks:
+
+        try:
+            df = yf.download(s, period="6mo", progress=False)
+
+            if df is None or df.empty:
+                continue
+
+            prob = predict(model, df)
+
+            if prob is None:
+                continue
+
+            results.append({
+                "股票": s,
+                "AI勝率": round(prob * 100, 2)
+            })
+
+        except:
+            pass
+
+        progress.progress(min(1.0, progress.n / len(stocks)))
+
     df = pd.DataFrame(results)
 
     if df.empty:
-        st.warning("沒有資料")
+        st.warning("沒有結果")
     else:
 
-        st.subheader("🟢 強勢訊號")
-        st.dataframe(df[df["訊號"] == "🟢 強勢訊號"])
+        df = df.sort_values("AI勝率", ascending=False)
 
-        st.subheader("🟡 準備訊號")
-        st.dataframe(df[df["訊號"] == "🟡 準備訊號"])
+        st.subheader("🟢 高勝率股票")
 
-        st.subheader("📊 全部排序")
-        st.dataframe(df.sort_values("強度", ascending=False))
+        st.dataframe(df.head(top_n))
+
+        st.subheader("📊 勝率分布")
+        st.bar_chart(df.set_index("股票")["AI勝率"])
