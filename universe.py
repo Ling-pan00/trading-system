@@ -3,62 +3,50 @@ import pandas as pd
 
 
 # =========================
-# 📊 取得全市場股票
-# =========================
-def get_raw_stock_list():
-
-    url = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
-    data = requests.get(url, timeout=10).json()
-
-    stocks = []
-
-    for i in data:
-
-        code = i.get("Code", "")
-        name = i.get("Name", "")
-
-        if not code.isdigit():
-            continue
-
-        if len(code) != 4:
-            continue
-
-        # 🚨 排除 ETF / ETN
-        if any(x in str(name) for x in ["ETF", "ETN", "指數", "槓桿", "反向", "債券"]):
-            continue
-
-        # 🚨 再保護一次
-        if code.startswith(("00", "006", "008", "009")):
-            continue
-
-        stocks.append(code)
-
-    return stocks
-
-
-# =========================
-# 🧠 動態流動性股票池（核心）
+# 🧠 動態流動性股票池
 # =========================
 def build_universe(top_n=300):
-
-    raw = get_raw_stock_list()
 
     url = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
     data = requests.get(url, timeout=10).json()
 
     df = pd.DataFrame(data)
 
-    # 只留合法股票
+    # =========================
+    # ① 基本清理
+    # =========================
     df = df[df["Code"].str.isdigit()]
     df = df[df["Code"].str.len() == 4]
 
-    # 排 ETF / ETN
-    df = df[~df["Name"].str.contains("ETF|ETN|指數|槓桿|反向|債券", na=False)]
+    # =========================
+    # ② ETF / ETN 排除
+    # =========================
+    df = df[~df["Name"].str.contains(
+        "ETF|ETN|指數|槓桿|反向|債券",
+        na=False
+    )]
 
-    # 轉數字
+    # =========================
+    # ③ 流動性轉換
+    # =========================
     df["TradeVolume"] = pd.to_numeric(df["TradeVolume"], errors="coerce")
     df["TradeValue"] = pd.to_numeric(df["TradeValue"], errors="coerce")
 
-    # 🚀 流動性評分（核心）
+    df = df.dropna(subset=["TradeVolume", "TradeValue"])
+
+    # =========================
+    # ④ 流動性分數（法人核心）
+    # =========================
     df["LiquidityScore"] = (
-        df["TradeVolume
+        df["TradeVolume"] * 0.6 +
+        df["TradeValue"] * 0.4
+    )
+
+    # =========================
+    # ⑤ 排序選 Top N
+    # =========================
+    df = df.sort_values("LiquidityScore", ascending=False)
+
+    universe = df["Code"].head(top_n).tolist()
+
+    return [c + ".TW" for c in universe]
