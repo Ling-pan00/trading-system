@@ -1,120 +1,178 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
-import requests
+import yfinance as yf
+import twstock
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from universe import build_universe
+st.set_page_config(
+    page_title="台股月線負乖離排行",
+    layout="wide"
+)
+
+st.title("台股月線負乖離排行（高速版）")
+
+st.markdown("篩選條件：股價低於月線 8%（含）以上")
+
+# 負乖離設定
+bias_limit = st.slider(
+    "負乖離 (%)",
+    min_value=-20,
+    max_value=-1,
+    value=-8
+)
+
+# 股票池
+@st.cache_data(ttl=86400)
+def get_stock_list():
+
+    stocks = []
+
+    for code, info in twstock.codes.items():
+
+        if info.market in ["上市", "上櫃"]:
+
+            # 避免ETF、權證
+            if len(code) == 4 and code.isdigit():
+
+                ticker = (
+                    f"{code}.TW"
+                    if info.market == "上市"
+                    else f"{code}.TWO"
+                )
+
+                stocks.append({
+                    "code": code,
+                    "name": info.name,
+                    "ticker": ticker
+                })
+
+    return stocks
 
 
-st.title("🏛️ 穩定法人 Top10（最終穩定版）")
+stock_list = get_stock_list()
 
+st.write(f"股票總數：{len(stock_list)}")
 
-# =========================
-# 📊 TWSE 安全資料
-# =========================
-def get_twse_data(stock):
+# 單檔掃描
+def scan_stock(stock):
+
+    code = stock["code"]
+    name = stock["name"]
+    ticker = stock["ticker"]
 
     try:
-        code = stock.replace(".TW", "")
 
-        url = "https://www.twse.com.tw/exchangeReport/STOCK_DAY"
-        params = {"stockNo": code, "response": "json"}
-
-        r = requests.get(url, params=params, timeout=10)
-        data = r.json()
-
-        if data.get("stat") != "OK":
-            return None
-
-        df = pd.DataFrame(data["data"], columns=data["fields"])
-
-        # 收盤價安全轉換
-        df["close"] = (
-            df["收盤價"]
-            .astype(str)
-            .str.replace(",", "")
-            .replace("-", np.nan)
+        df = yf.download(
+            ticker,
+            period="3mo",
+            interval="1d",
+            progress=False,
+            auto_adjust=False,
+            threads=False
         )
 
-        df = df.dropna(subset=["close"])
-        df["close"] = df["close"].astype(float)
-
-        return df
-
-    except:
-        return None
-
-
-# =========================
-# 🧠 簡化穩定 score
-# =========================
-def score(df):
-
-    try:
-        if len(df) < 10:
+        if df.empty or len(df) < 20:
             return None
 
-        df = df.copy()
+        close_series = df["Close"]
 
-        df["ma5"] = df["close"].rolling(5).mean()
-        df["ma10"] = df["close"].rolling(10).mean()
+        # 避免多欄位
+        if isinstance(close_series, pd.DataFrame):
+            close_series = close_series.iloc[:, 0]
 
-        df = df.dropna()
+        ma20 = close_series.rolling(20).mean().iloc[-1]
+        close = float(close_series.iloc[-1])
 
-        if len(df) < 10:
+        if pd.isna(ma20):
             return None
 
-        return (
-            df["close"].iloc[-1] / df["close"].iloc[-5] - 1
-        )
+        bias = ((close - ma20) / ma20) * 100
 
-    except:
+        if bias <= bias_limit:
+
+            return {
+                "股票代號": code,
+                "股票名稱": name,
+                "收盤價": round(close, 2),
+                "月線MA20": round(ma20, 2),
+                "乖離率(%)": round(bias, 2)
+            }
+
+    except Exception:
         return None
 
+    return None
 
-# =========================
-# 🚀 主程式
-# =========================
-if st.button("🚀 產生 Top10"):
 
-    stocks = build_universe(percentile=0.2)
-
-    st.write(f"📦 股票池數量：{len(stocks)}")
+# 開始篩選
+if st.button("開始高速掃描"):
 
     results = []
 
-    progress = st.progress(0)
+    progress_bar = st.progress(0)
+    status_text = st.empty()
 
-    for i, s in enumerate(stocks):
+    total = len(stock_list)
+    completed = 0
 
-        df = get_twse_data(s)
+    # 高速多執行緒
+    MAX_WORKERS = 20
 
-        if df is None:
-            continue
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
 
-        sc = score(df)
+        futures = {
+            executor.submit(scan_stock, stock): stock
+            for stock in stock_list
+        }
 
-        if sc is None:
-            continue
+        for future in as_completed(futures):
 
-        results.append({"股票": s, "Score": sc})
+            result = future.result()
 
-        progress.progress((i + 1) / len(stocks))
+            if result:
+                results.append(result)
 
-    df = pd.DataFrame(results)
+            completed += 1
 
-    # 🧠 保底（防空）
-    if df.empty:
-        st.warning("啟動保底資料")
-        df = pd.DataFrame([
-            {"股票": "2330.TW", "Score": 1},
-            {"股票": "2317.TW", "Score": 0.9},
-            {"股票": "2454.TW", "Score": 0.8},
-        ])
+            progress_bar.progress(completed / total)
 
-    df = df.sort_values("Score", ascending=False)
+            if completed % 20 == 0:
+                status_text.text(
+                    f"已掃描 {completed}/{total}"
+                )
 
-    st.subheader("🔥 Top 10")
+    status_text.text("掃描完成")
 
-    st.dataframe(df.head(10))
-    st.bar_chart(df.head(10).set_index("股票")["Score"])
+    if results:
+
+        result_df = pd.DataFrame(results)
+
+        # 負乖離最大排前面
+        result_df = result_df.sort_values(
+            by="乖離率(%)",
+            ascending=True
+        )
+
+        st.success(f"找到 {len(result_df)} 檔符合條件股票")
+
+        st.dataframe(
+            result_df,
+            use_container_width=True,
+            height=700
+        )
+
+        # 下載CSV
+        csv = result_df.to_csv(
+            index=False
+        ).encode("utf-8-sig")
+
+        st.download_button(
+            label="下載CSV",
+            data=csv,
+            file_name="台股月線負乖離排行.csv",
+            mime="text/csv"
+        )
+
+    else:
+
+        st.warning("沒有符合條件股票")
