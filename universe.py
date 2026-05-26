@@ -1,42 +1,21 @@
-import requests
+def build_universe():
 
-
-# =========================
-# 📊 取得「上市股票清單」（乾淨）
-# =========================
-def get_stock_list():
-
-    url = "https://openapi.twse.com.tw/v1/opendata/t187ap03_L"
-    data = requests.get(url, timeout=10).json()
+    # 🧠 台股「純股票合理範圍」
+    # ETF / ETN 幾乎不在這個範圍內
 
     stocks = []
 
-    for i in data:
+    for i in range(1100, 9999):
 
-        code = i.get("公司代號", "")
+        code = str(i)
 
-        if not code:
+        # 排除明顯 ETF 區段
+        if code.startswith("00"):
             continue
 
-        if not code.isdigit():
-            continue
-
-        if len(code) != 4:
+        if code.startswith("006") or code.startswith("008") or code.startswith("009"):
             continue
 
         stocks.append(code + ".TW")
 
-    return stocks
-
-
-# =========================
-# 🧠 法人股票池（乾淨穩定）
-# =========================
-def build_universe(limit=150):
-
-    stocks = get_stock_list()
-
-    # 保持合理大小（避免太慢）
-    stocks = stocks[:limit]
-
-    return stocks
+    return stocks[:150]
