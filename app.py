@@ -4,34 +4,17 @@ import numpy as np
 import requests
 import yfinance as yf
 
-st.set_page_config(page_title="法人打分選股系統", layout="wide")
+from universe import build_dynamic_universe
 
-st.title("🏛️ 法人多因子打分選股系統 v2")
+st.set_page_config(page_title="Top 10 訊號系統", layout="wide")
 
-
-# =========================
-# 📊 股票池
-# =========================
-def get_universe():
-
-    url = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
-    data = requests.get(url, timeout=10).json()
-
-    stocks = []
-
-    for i in data:
-        code = i["Code"]
-
-        if code.isdigit():
-            stocks.append(code + ".TW")
-
-    return stocks[:60]
+st.title("🏛️ 法人 Top 10 訊號系統")
 
 
 # =========================
-# 📈 打分模型（核心）
+# 📈 Alpha 打分模型
 # =========================
-def score_stock(df):
+def score(df):
 
     try:
         df = df.copy()
@@ -43,52 +26,37 @@ def score_stock(df):
         df = df.dropna()
 
         if len(df) < 60:
-            return 0
+            return None
 
-        # =========================
-        # 🟢 1. 流動性分數
-        # =========================
-        liquidity = np.log(df["Volume"].mean() + 1)
-
-        # =========================
-        # 🟡 2. 動能分數
-        # =========================
         momentum = df["Close"].iloc[-1] / df["Close"].iloc[-20] - 1
 
-        # =========================
-        # 🟡 3. 趨勢分數
-        # =========================
         trend = (df["ma20"].iloc[-1] - df["ma60"].iloc[-1]) / df["ma60"].iloc[-1]
 
-        # =========================
-        # 🔵 4. 波動分數（適中最好）
-        # =========================
         volatility = df["ret"].std()
 
-        # =========================
-        # 🧠 加權 Alpha Score
-        # =========================
+        volume = df["Volume"].mean()
+
         score = (
-            liquidity * 0.25 +
-            momentum * 0.35 +
-            trend * 0.25 +
-            volatility * 0.15
+            momentum * 0.4 +
+            trend * 0.3 +
+            np.log(volume + 1) * 0.2 +
+            volatility * 0.1
         )
 
         return float(score)
 
     except:
-        return 0
+        return None
 
 
 # =========================
-# 📊 主程式
+# 🚀 主程式
 # =========================
-if st.button("🚀 開始法人打分掃描"):
+if st.button("🚀 產生 Top 10 訊號"):
 
-    stocks = get_universe()
+    stocks = build_dynamic_universe()
 
-    st.write(f"📦 股票池數量：{len(stocks)}")
+    st.write(f"📦 動態股票池數量：{len(stocks)}")
 
     results = []
 
@@ -102,11 +70,14 @@ if st.button("🚀 開始法人打分掃描"):
             if df is None or df.empty:
                 continue
 
-            score = score_stock(df)
+            s_score = score(df)
+
+            if s_score is None:
+                continue
 
             results.append({
                 "股票": s,
-                "Alpha Score": score
+                "Alpha Score": s_score
             })
 
         except:
@@ -114,16 +85,18 @@ if st.button("🚀 開始法人打分掃描"):
 
         progress.progress((i + 1) / len(stocks))
 
-    result_df = pd.DataFrame(results)
+    df = pd.DataFrame(results)
 
-    if result_df.empty:
-        st.warning("沒有資料（請檢查資料源）")
+    if df.empty:
+        st.warning("沒有可用訊號（資料不足）")
         st.stop()
 
-    result_df = result_df.sort_values("Alpha Score", ascending=False)
+    df = df.sort_values("Alpha Score", ascending=False)
 
-    st.subheader("📊 法人 Alpha 排名 Top 20")
+    top10 = df.head(10)
 
-    st.dataframe(result_df.head(20))
+    st.subheader("🔥 Top 10 強勢訊號")
 
-    st.bar_chart(result_df.head(20).set_index("股票")["Alpha Score"])
+    st.dataframe(top10)
+
+    st.bar_chart(top10.set_index("股票")["Alpha Score"])
