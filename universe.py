@@ -2,9 +2,9 @@ import requests
 
 
 # =========================
-# 📊 取得台股全市場
+# 📊 取得全市場
 # =========================
-def get_raw_universe():
+def get_universe():
 
     url = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
     data = requests.get(url, timeout=10).json()
@@ -13,31 +13,23 @@ def get_raw_universe():
 
 
 # =========================
-# 🧠 穩定股票池（法人平衡版）
+# 🧠 動態股票池（市場活躍度）
 # =========================
-def build_universe(limit=60):
+def build_dynamic_universe():
 
-    raw = get_raw_universe()
+    raw = get_universe()
 
-    stocks = []
+    pool = []
 
     for code in raw:
 
-        # ✔ 只保留 4 位數股票
+        # ✔ 只留股票
         if len(code) != 4:
             continue
 
-        # ✔ 排除明顯 ETF（00開頭）
         if code.startswith("00"):
             continue
 
-        stocks.append(code + ".TW")
+        pool.append(code + ".TW")
 
-        if len(stocks) >= limit:
-            break
-
-    # 🧠 保底機制（避免空）
-    if len(stocks) < 20:
-        return [c + ".TW" for c in raw[:50] if c.isdigit()]
-
-    return stocks
+    return pool
