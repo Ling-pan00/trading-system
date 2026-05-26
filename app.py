@@ -15,13 +15,9 @@ take_profit = st.slider("停利 (%)", 1, 20, 5)
 
 
 # =========================
-# 🧠 安全取值函數（關鍵）
+# 🧠 安全數值轉換（核心）
 # =========================
-def safe_value(x):
-    """
-    防止 yfinance 回傳 Series / ndarray
-    一律轉成純 float
-    """
+def safe_float(x):
     try:
         return float(np.array(x).item())
     except:
@@ -29,7 +25,7 @@ def safe_value(x):
 
 
 # =========================
-# 📉 REVERSAL
+# 📉 REVERSAL（穩定版）
 # =========================
 def reversal(df, i):
 
@@ -38,10 +34,15 @@ def reversal(df, i):
 
     ma20 = df["Close"].rolling(20).mean().iloc[i]
 
-    if pd.isna(ma20):
+    try:
+        ma20 = float(ma20)
+    except:
         return False
 
-    close = safe_value(df["Close"].iloc[i])
+    close = safe_float(df["Close"].iloc[i])
+
+    if np.isnan(close) or np.isnan(ma20) or ma20 == 0:
+        return False
 
     bias = ((close - ma20) / ma20) * 100
 
@@ -53,7 +54,7 @@ def reversal(df, i):
 
 
 # =========================
-# 📈 TREND
+# 📈 TREND（穩定版）
 # =========================
 def trend(df, i):
 
@@ -62,14 +63,19 @@ def trend(df, i):
 
     high20 = df["High"].rolling(20).max().iloc[i - 1]
 
-    cond1 = df["Close"].iloc[i] > high20
+    try:
+        high20 = float(high20)
+    except:
+        return False
+
+    cond1 = safe_float(df["Close"].iloc[i]) > high20
     cond2 = df["Volume"].iloc[i] > df["Volume"].rolling(20).mean().iloc[i]
 
     return cond1 and cond2
 
 
 # =========================
-# 🚀 回測
+# 🚀 回測主程式
 # =========================
 if st.button("🚀 開始回測"):
 
@@ -80,12 +86,12 @@ if st.button("🚀 開始回測"):
 
         df = yf.download(s, period="1y", progress=False)
 
-        if df is None or df.empty or len(df) < 100:
+        if df is None or df.empty or len(df) < 120:
             continue
 
         for i in range(60, len(df) - holding_days):
 
-            entry_price = safe_value(df["Close"].iloc[i])
+            entry_price = safe_float(df["Close"].iloc[i])
 
             if np.isnan(entry_price):
                 continue
@@ -93,12 +99,12 @@ if st.button("🚀 開始回測"):
             exit_price = None
 
             # =========================
-            # 出場邏輯
+            # 出場邏輯（停利 / 停損）
             # =========================
             for j in range(i + 1, i + holding_days):
 
-                high = safe_value(df["High"].iloc[j])
-                low = safe_value(df["Low"].iloc[j])
+                high = safe_float(df["High"].iloc[j])
+                low = safe_float(df["Low"].iloc[j])
 
                 if np.isnan(high) or np.isnan(low):
                     continue
@@ -114,7 +120,7 @@ if st.button("🚀 開始回測"):
                     break
 
             if exit_price is None:
-                exit_price = safe_value(df["Close"].iloc[i + holding_days])
+                exit_price = safe_float(df["Close"].iloc[i + holding_days])
 
             if np.isnan(exit_price):
                 continue
