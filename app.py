@@ -1,10 +1,11 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
+import numpy as np
 
 st.set_page_config(page_title="台股策略回測系統", layout="wide")
 
-st.title("📊 台股策略回測系統（穩定修正版）")
+st.title("📊 台股策略回測系統（穩定終極版）")
 
 stocks = ["2330.TW", "2317.TW", "2454.TW", "2382.TW"]
 
@@ -14,7 +15,21 @@ take_profit = st.slider("停利 (%)", 1, 20, 5)
 
 
 # =========================
-# 📉 REVERSAL（跌深反轉）
+# 🧠 安全取值函數（關鍵）
+# =========================
+def safe_value(x):
+    """
+    防止 yfinance 回傳 Series / ndarray
+    一律轉成純 float
+    """
+    try:
+        return float(np.array(x).item())
+    except:
+        return np.nan
+
+
+# =========================
+# 📉 REVERSAL
 # =========================
 def reversal(df, i):
 
@@ -26,7 +41,7 @@ def reversal(df, i):
     if pd.isna(ma20):
         return False
 
-    close = df["Close"].iloc[i]
+    close = safe_value(df["Close"].iloc[i])
 
     bias = ((close - ma20) / ma20) * 100
 
@@ -38,7 +53,7 @@ def reversal(df, i):
 
 
 # =========================
-# 📈 TREND（突破策略）
+# 📈 TREND
 # =========================
 def trend(df, i):
 
@@ -54,35 +69,39 @@ def trend(df, i):
 
 
 # =========================
-# 🚀 回測主程式
+# 🚀 回測
 # =========================
 if st.button("🚀 開始回測"):
 
     results = []
-
     progress = st.progress(0)
 
     for idx, s in enumerate(stocks):
 
         df = yf.download(s, period="1y", progress=False)
 
-        if df.empty:
+        if df is None or df.empty or len(df) < 100:
             continue
 
         for i in range(60, len(df) - holding_days):
 
-            # 🔥 關鍵修正：強制轉 float（避免 Series 問題）
-            entry_price = float(df["Close"].iloc[i])
+            entry_price = safe_value(df["Close"].iloc[i])
+
+            if np.isnan(entry_price):
+                continue
 
             exit_price = None
 
             # =========================
-            # 出場邏輯（停利 / 停損）
+            # 出場邏輯
             # =========================
             for j in range(i + 1, i + holding_days):
 
-                high = float(df["High"].iloc[j])
-                low = float(df["Low"].iloc[j])
+                high = safe_value(df["High"].iloc[j])
+                low = safe_value(df["Low"].iloc[j])
+
+                if np.isnan(high) or np.isnan(low):
+                    continue
 
                 # 停利
                 if (high - entry_price) / entry_price * 100 >= take_profit:
@@ -94,14 +113,16 @@ if st.button("🚀 開始回測"):
                     exit_price = entry_price * (1 + stop_loss / 100)
                     break
 
-            # 沒觸發停利停損
             if exit_price is None:
-                exit_price = float(df["Close"].iloc[i + holding_days])
+                exit_price = safe_value(df["Close"].iloc[i + holding_days])
+
+            if np.isnan(exit_price):
+                continue
 
             ret = (exit_price - entry_price) / entry_price * 100
 
             # =========================
-            # REVERSAL 訊號
+            # REVERSAL
             # =========================
             if reversal(df, i):
                 results.append({
@@ -113,7 +134,7 @@ if st.button("🚀 開始回測"):
                 })
 
             # =========================
-            # TREND 訊號
+            # TREND
             # =========================
             if trend(df, i):
                 results.append({
@@ -129,7 +150,7 @@ if st.button("🚀 開始回測"):
     df_result = pd.DataFrame(results)
 
     if df_result.empty:
-        st.warning("沒有符合條件的交易訊號")
+        st.warning("沒有交易訊號")
     else:
 
         st.subheader("📋 回測明細")
