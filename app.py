@@ -1,15 +1,14 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import requests
 import yfinance as yf
 
 from universe import build_universe
 
 
-st.set_page_config(page_title="法人 Top10 系統", layout="wide")
+st.set_page_config(page_title="法人 Top10", layout="wide")
 
-st.title("🏛️ 動態流動性 + 法人 Top10 系統")
+st.title("🏛️ 法人級 Top 10（穩定終極版）")
 
 
 # =========================
@@ -30,7 +29,7 @@ def get_data(stock):
 
 
 # =========================
-# 🧠 法人打分模型
+# 🧠 打分模型
 # =========================
 def score(df):
 
@@ -67,12 +66,12 @@ def score(df):
 # =========================
 # 🚀 主程式
 # =========================
-if st.button("🚀 產生 Top 10 訊號"):
+if st.button("🚀 產生 Top 10"):
 
-    # 🧠 動態股票池（重點）
+    # 🧠 動態股票池（永遠不會炸）
     stocks = build_universe(top_n=300)
 
-    st.write(f"📦 動態股票池數量：{len(stocks)}")
+    st.write(f"📦 股票池數量：{len(stocks)}")
 
     results = []
 
@@ -100,7 +99,7 @@ if st.button("🚀 產生 Top 10 訊號"):
     df = pd.DataFrame(results)
 
     if df.empty:
-        st.warning("沒有資料（請檢查 yfinance）")
+        st.warning("沒有資料（yfinance 或網路問題）")
         st.stop()
 
     df = df.sort_values("Score", ascending=False)
