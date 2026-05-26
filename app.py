@@ -4,11 +4,13 @@ import numpy as np
 import requests
 import yfinance as yf
 
-st.title("🏛️ 法人級 Top 10 選股系統（真實版）")
+st.set_page_config(page_title="法人 Top10 系統", layout="wide")
+
+st.title("🏛️ 法人級 Top 10 選股系統（穩定版）")
 
 
 # =========================
-# 📊 股票池（已排 ETF）
+# 📊 股票池（乾淨版）
 # =========================
 def get_universe():
 
@@ -19,7 +21,8 @@ def get_universe():
 
     for i in data:
 
-        code = i["Code"]
+        code = i.get("Code", "")
+        name = i.get("Name", "")
 
         if not code.isdigit():
             continue
@@ -27,26 +30,36 @@ def get_universe():
         if len(code) != 4:
             continue
 
-        # 🚨 ETF / ETN 排除
+        name = str(name)
+
+        # 🚨 ETF / ETN 排除（最重要）
+        if any(x in name for x in ["ETF", "ETN", "指數", "槓桿", "反向", "債券"]):
+            continue
+
+        # 🚨 台股 ETF 常見區間再保護
         if code.startswith(("00", "006", "008", "009")):
             continue
 
         stocks.append(code + ".TW")
 
-    return stocks[:100]
+    return stocks   # ❗不限制數量（重點）
 
 
 # =========================
-# 📈 真實資料
+# 📈 取得真實價格
 # =========================
-def get_price(stock):
+def get_data(stock):
 
-    df = yf.download(stock, period="6mo", progress=False)
+    try:
+        df = yf.download(stock, period="6mo", progress=False)
 
-    if df is None or df.empty:
+        if df is None or df.empty:
+            return None
+
+        return df
+
+    except:
         return None
-
-    return df
 
 
 # =========================
@@ -73,14 +86,12 @@ def score(df):
 
         volume = df["Volume"].mean()
 
-        score = (
+        return (
             momentum * 0.4 +
             trend * 0.3 +
             np.log(volume + 1) * 0.2 +
             volatility * 0.1
         )
-
-        return float(score)
 
     except:
         return None
@@ -89,9 +100,12 @@ def score(df):
 # =========================
 # 🚀 主程式
 # =========================
-if st.button("🚀 產生 Top 10（真實法人版）"):
+if st.button("🚀 產生 Top 10 訊號"):
 
     stocks = get_universe()
+
+    # 👉 在這裡控制掃描數量（重點）
+    stocks = stocks[:200]   # 🔥 你要 100 / 200 / 300 改這裡
 
     st.write(f"📦 股票池數量：{len(stocks)}")
 
@@ -101,7 +115,7 @@ if st.button("🚀 產生 Top 10（真實法人版）"):
 
     for i, s in enumerate(stocks):
 
-        df = get_price(s)
+        df = get_data(s)
 
         if df is None:
             continue
@@ -121,7 +135,7 @@ if st.button("🚀 產生 Top 10（真實法人版）"):
     df = pd.DataFrame(results)
 
     if df.empty:
-        st.warning("沒有資料（yfinance 抓不到）")
+        st.warning("沒有可用資料（yfinance 失敗）")
         st.stop()
 
     df = df.sort_values("Score", ascending=False)
