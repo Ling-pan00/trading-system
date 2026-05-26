@@ -31,7 +31,6 @@ def reversal(df, i):
 
     return cond1 and cond2 and cond3
 
-
 # =========================
 # 📈 TREND（順勢突破）
 # =========================
