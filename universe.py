@@ -2,68 +2,41 @@ import requests
 
 
 # =========================
-# 📊 取得全市場
+# 📊 取得「上市股票清單」（乾淨）
 # =========================
-def get_raw():
+def get_stock_list():
 
-    url = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
+    url = "https://openapi.twse.com.tw/v1/opendata/t187ap03_L"
     data = requests.get(url, timeout=10).json()
-
-    return data
-
-
-# =========================
-# 🧠 法人級股票池（不混 ETF）
-# =========================
-def build_institution_universe(limit=120):
-
-    raw = get_raw()
 
     stocks = []
 
-    for i in raw:
+    for i in data:
 
-        code = i.get("Code", "")
-        name = i.get("Name", "")
+        code = i.get("公司代號", "")
 
-        # =========================
-        # ① 基本合法性
-        # =========================
+        if not code:
+            continue
+
         if not code.isdigit():
             continue
 
         if len(code) != 4:
             continue
 
-        # =========================
-        # ② ETF / ETN / 指數排除（關鍵）
-        # =========================
-        name_upper = name.upper()
-
-        if any(x in name_upper for x in [
-            "ETF", "ETN", "指數", "槓桿", "反向", "債券"
-        ]):
-            continue
-
-        # 代碼層級再保護（台股ETF常見區間）
-        if (
-            code.startswith("00") or
-            code.startswith("006") or
-            code.startswith("008") or
-            code.startswith("009")
-        ):
-            continue
-
         stocks.append(code + ".TW")
 
-        if len(stocks) >= limit:
-            break
+    return stocks
 
-    # =========================
-    # 🧠 保底機制（永遠不空）
-    # =========================
-    if len(stocks) < 30:
-        fallback = [i["Code"] for i in raw if i["Code"].isdigit()][:80]
-        return [c + ".TW" for c in fallback]
+
+# =========================
+# 🧠 法人股票池（乾淨穩定）
+# =========================
+def build_universe(limit=150):
+
+    stocks = get_stock_list()
+
+    # 保持合理大小（避免太慢）
+    stocks = stocks[:limit]
 
     return stocks
