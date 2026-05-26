@@ -1,124 +1,113 @@
-import streamlit as st
-import pandas as pd
-import numpy as np
 import requests
+import pandas as pd
 import yfinance as yf
-
-st.set_page_config(page_title="法人多因子選股系統", layout="wide")
-
-st.title("🏛️ 法人多因子選股系統")
 
 
 # =========================
-# 📊 股票池（穩定 + 排ETF）
+# 📊 取得台股全市場
 # =========================
 def get_universe():
 
     url = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
     data = requests.get(url, timeout=10).json()
 
-    stocks = []
-
-    for i in data:
-
-        code = i["Code"]
-
-        # ✔ 只保留純股票（排 ETF / 特殊）
-        if not code.isdigit():
-            continue
-
-        if len(code) != 4:
-            continue
-
-        stocks.append(code + ".TW")
-
-    return stocks[:80]
+    return [i["Code"] for i in data if i["Code"].isdigit()]
 
 
 # =========================
-# 📈 多因子模型
+# 🟢 Tier 1：法人核心池
 # =========================
-def alpha_score(df):
+def tier1(stocks):
 
-    try:
-        df = df.copy()
+    result = []
 
-        df["ret"] = df["Close"].pct_change()
-        df["ma20"] = df["Close"].rolling(20).mean()
-        df["ma60"] = df["Close"].rolling(60).mean()
-
-        df = df.dropna()
-
-        if len(df) < 60:
-            return 0
-
-        momentum = df["Close"].iloc[-1] / df["Close"].iloc[-20] - 1
-
-        trend = (df["ma20"].iloc[-1] - df["ma60"].iloc[-1]) / df["ma60"].iloc[-1]
-
-        volatility = df["ret"].std()
-
-        volume = df["Volume"].mean() / 1_000_000
-
-        strength = df["Close"].iloc[-1] / df["Close"].min()
-
-        score = (
-            momentum * 0.35 +
-            trend * 0.25 +
-            volatility * 0.10 +
-            volume * 0.15 +
-            strength * 0.15
-        )
-
-        return float(score)
-
-    except:
-        return 0
-
-
-# =========================
-# 🚀 主程式
-# =========================
-if st.button("🚀 開始法人掃描"):
-
-    stocks = get_universe()
-
-    st.write(f"📦 股票池數量：{len(stocks)}")
-
-    results = []
-
-    progress = st.progress(0)
-
-    for i, s in enumerate(stocks):
+    for s in stocks:
 
         try:
-            df = yf.download(s, period="6mo", progress=False)
+            df = yf.download(f"{s}.TW", period="1mo", progress=False)
 
             if df is None or df.empty:
                 continue
 
-            score = alpha_score(df)
+            vol = df["Volume"].mean()
+            price = df["Close"].iloc[-1]
 
-            results.append({
-                "股票": s,
-                "Alpha": score
-            })
+            if vol > 1_000_000 and price > 30:
+                result.append(s)
 
         except:
             continue
 
-        progress.progress((i + 1) / len(stocks))
+    return result
 
-    df = pd.DataFrame(results)
 
-    if df.empty:
-        st.warning("沒有資料")
-        st.stop()
+# =========================
+# 🟡 Tier 2：成長動能股
+# =========================
+def tier2(stocks):
 
-    df = df.sort_values("Alpha", ascending=False)
+    result = []
 
-    st.subheader("📊 法人多因子排名")
+    for s in stocks:
 
-    st.dataframe(df.head(20))
+        try:
+            df = yf.download(f"{s}.TW", period="3mo", progress=False)
 
-    st.bar_chart(df.set_index("股票")["Alpha"])
+            if df is None or df.empty:
+                continue
+
+            ret = df["Close"].pct_change().mean()
+            vol = df["Volume"].mean()
+
+            if ret > 0 and vol > 300000:
+                result.append(s)
+
+        except:
+            continue
+
+    return result
+
+
+# =========================
+# 🔵 Tier 3：防守穩定股
+# =========================
+def tier3(stocks):
+
+    result = []
+
+    for s in stocks:
+
+        try:
+            df = yf.download(f"{s}.TW", period="3mo", progress=False)
+
+            if df is None or df.empty:
+                continue
+
+            returns = df["Close"].pct_change().dropna()
+            volatility = returns.std()
+
+            if volatility < 0.015:
+                result.append(s)
+
+        except:
+            continue
+
+    return result
+
+
+# =========================
+# 🏛️ 三層股票池主函數
+# =========================
+def build_three_tier_universe():
+
+    stocks = get_universe()
+
+    t1 = tier1(stocks)
+    t2 = tier2(stocks)
+    t3 = tier3(stocks)
+
+    return {
+        "Tier 1（核心法人）": [f"{s}.TW" for s in t1],
+        "Tier 2（成長動能）": [f"{s}.TW" for s in t2],
+        "Tier 3（防守穩定）": [f"{s}.TW" for s in t3],
+    }
