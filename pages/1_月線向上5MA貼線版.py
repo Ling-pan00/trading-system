@@ -69,7 +69,7 @@ if st.button("🔍 開始全自動掃描全台股（多頭貼線）", type="prim
             # 【多頭條件】：月線向上 ＆ 股價離 5MA +/- 5% 內
             is_20ma_up = today_20ma > yesterday_20ma
             bias_5ma = ((today_close - today_5ma) / today_5ma) * 100
-            is_near_5ma = -5.0 <= bias_5ma <= 5.0
+            is_near_5ma = -8.0 <= bias_5ma <= 8.0
 
             if is_20ma_up and is_near_5ma:
                 market_type = "上市" if ticker.endswith(".TW") else "上櫃"
