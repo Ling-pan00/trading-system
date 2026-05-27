@@ -2,3 +2,5 @@ streamlit
 pandas
 yfinance
 twstock
+pytz
+plotly
