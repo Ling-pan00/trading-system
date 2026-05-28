@@ -40,7 +40,7 @@ def get_all_tw_stocks():
         1704, 1710, 1711, 1712, 1713, 1714, 1717, 1718, 1721, 1722, 1723, 1725, 1727, 1730, 1732, 1735, 1742, 1750, 
         1773, 1776, 1783, 1786, 1789, 1795, 
         # 半導體核心群
-        2302, 2303, 2329, 2330, 2337, 2338, 2344, 2351, 2363, 2369, 2379, 2388, 2408, 2434, 2441, 2449, 2454, 
+        2302, 2303, 2329, 2330, 2337, 2338, 2344, 2351, 2363, 2369, 2379, 2388, 2408, 2434, 2436, 2441, 2449, 2454, 
         2458, 2481, 3006, 3016, 3034, 3035, 3041, 3054, 3189, 3228, 3231, 3260, 3264, 3289, 3374, 3413, 3438, 3529, 
         3532, 3545, 3557, 3567, 3583, 3588, 3592, 3653, 3661, 3680, 3686, 3707, 4919, 4952, 4961, 4967, 4968, 5269, 
         5274, 5347, 5471, 5483, 6138, 6147, 6182, 6223, 6239, 6243, 6257, 6271, 6411, 6415, 6435, 6451, 6462, 6477, 
@@ -74,7 +74,7 @@ def get_all_tw_stocks():
     return list(set(stock_pool))
 
 # ==========================================
-# 3. 量化指標運算 
+# 3. 量化指標運算 (穩定版)
 # ==========================================
 def calculate_indicators_and_signals(all_data):
     processed_list = []
@@ -101,21 +101,16 @@ def calculate_indicators_and_signals(all_data):
         return pd.DataFrame()
     return pd.concat(processed_list, ignore_index=True)
 
-# ==========================================
-# 4. 策略篩選器
-# ==========================================
 def filter_strategy(df_today, tolerance=0.08):
     if df_today.empty:
         return pd.DataFrame()
-    
     condition_trend = (df_today['MA20'] > df_today['MA60']) & (df_today['Close'] > df_today['MA20'])
     condition_near_5ma = df_today['Dist_5MA'].abs() <= tolerance
-    
     filtered = df_today[condition_trend & condition_near_5ma]
     return filtered.sort_values('AI_Win_Rate', ascending=False)
 
 # ==========================================
-# 5. 控制與下載邏輯
+# 5. 控制與下載邏輯 (解開 MultiIndex 的終極大招)
 # ==========================================
 st.sidebar.header("⚙️ 篩選設定")
 m_tolerance = st.sidebar.slider("5MA 貼近容忍度 (±%)", 1, 15, 8) / 100
@@ -140,23 +135,29 @@ if st.button("🏛️ 啟動 12 大科技板塊即時盤後掃描", type="primar
             try:
                 df_chunk_raw = yf.download(
                     tickers=chunk, start=start_dt, end=end_dt, 
-                    auto_adjust=True, group_by='ticker', progress=False, timeout=15
+                    auto_adjust=True, progress=False, timeout=15
                 )
                 if df_chunk_raw.empty: 
                     continue
                     
-                if isinstance(df_chunk_raw.columns, pd.MultiIndex):
-                    for stock_id in chunk:
-                        if stock_id in df_chunk_raw.columns.levels[0]:
-                            df_k = df_chunk_raw[stock_id].reset_index()
+                # 🔥 🔥 🔥 終極大改寫：徹底打平 yfinance 惡心人的 MultiIndex 欄位結構
+                for stock_id in chunk:
+                    try:
+                        # 檢查此股票代碼是否存在於下載的資料中
+                        if stock_id in df_chunk_raw.columns.get_level_values(1):
+                            # 單獨把這一檔個股切出來，並強制定名欄位名稱
+                            df_k = df_chunk_raw.xs(stock_id, axis=1, level=1).reset_index()
+                            df_k.columns = [str(c).upper() for c in df_k.columns] # 全部強制轉大寫字串！
                             
-                            # 🔥 🔥 🔥 關鍵防錯：強制將所有欄位名稱轉為首字母大寫，防止 yfinance 小寫 Bug
-                            df_k.columns = [c.capitalize() for c in df_k.columns]
-                            
-                            df_k = df_k.dropna(subset=['Close', 'Volume'])
-                            if len(df_k) >= 60:
+                            if 'DATE' in df_k.columns and not df_k['CLOSE'].dropna().empty:
+                                df_k = df_k.rename(columns={
+                                    'DATE': 'Date', 'OPEN': 'Open', 'HIGH': 'High', 
+                                    'LOW': 'Low', 'CLOSE': 'Close', 'VOLUME': 'Volume'
+                                })
                                 df_k['Stock_ID'] = stock_id
-                                all_frames.append(df_k)
+                                all_frames.append(df_k[['Date', 'Open', 'High', 'Low', 'Close', 'Volume', 'Stock_ID']])
+                    except:
+                        continue
             except Exception:
                 continue
         
@@ -166,9 +167,6 @@ if st.button("🏛️ 啟動 12 大科技板塊即時盤後掃描", type="primar
             st.error("❌ 下載失敗，請稍後再試。")
         else:
             df_all = pd.concat(all_frames, ignore_index=True)
-            if 'Date' not in df_all.columns and 'Index' in df_all.columns:
-                df_all = df_all.rename(columns={'Index': 'Date'})
-                
             st.session_state.raw_df_all = df_all
             df_today_signals = calculate_indicators_and_signals(df_all)
             df_filtered = filter_strategy(df_today_signals, tolerance=m_tolerance)
@@ -182,7 +180,7 @@ if st.button("🏛️ 啟動 12 大科技板塊即時盤後掃描", type="primar
 # ==========================================
 if st.session_state.scan_results is not None:
     st.markdown("---")
-    st.success(f"🎉 數據加載完成！已準備就緒。")
+    st.success(f"🎉 數據更新成功！")
     st.subheader(f"📋 12大核心板塊：今日 AI 多頭貼線選股清單")
     
     if st.session_state.scan_results.empty:
@@ -225,32 +223,30 @@ if st.session_state.scan_results is not None:
             plot_df = stock_k_data.tail(90).copy()
             
             if not plot_df.empty:
-                # 重新動態計算均線，確保繪圖完整
                 plot_df['MA5'] = plot_df['Close'].rolling(window=5).mean()
                 plot_df['MA20'] = plot_df['Close'].rolling(window=20).mean()
                 plot_df['MA60'] = plot_df['Close'].rolling(window=60).mean()
                 
-                # 🛠️ 軌道一：標準專業專業日 K 線圖 (Plotly 渲染)
-                try:
-                    fig_k = go.Figure()
-                    fig_k.add_trace(go.Candlestick(
-                        x=plot_df['Date'], open=plot_df['Open'], high=plot_df['High'], low=plot_df['Low'], close=plot_df['Close'], name='日 K 線',
-                        increasing_line_color='#FF3333', decreasing_line_color='#00AA00'
-                    ))
-                    fig_k.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['MA5'], name='5MA', line=dict(color='#FFDD00', width=1.5)))
-                    fig_k.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['MA20'], name='20MA', line=dict(color='#FF00FF', width=2)))
-                    fig_k.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['MA60'], name='60MA', line=dict(color='#00FFFF', width=1.5)))
-                    
-                    fig_k.update_layout(
-                        template="plotly_dark", height=420, xaxis_rangeslider_visible=False,
-                        margin=dict(l=10, r=10, t=10, b=10),
-                        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-                    )
-                    st.plotly_chart(fig_k, use_container_width=True)
-                except Exception as e:
-                    st.caption("🔄 已自動切換至手機相容渲染模式")
+                # 🛠️ 專業 K 線圖 (Plotly)
+                fig_k = go.Figure()
+                fig_k.add_trace(go.Candlestick(
+                    x=plot_df['Date'], open=plot_df['Open'], high=plot_df['High'], low=plot_df['Low'], close=plot_df['Close'], name='日 K 線',
+                    increasing_line_color='#FF3333', decreasing_line_color='#00AA00'
+                ))
+                fig_k.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['MA5'], name='5MA', line=dict(color='#FFDD00', width=1.5)))
+                fig_k.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['MA20'], name='20MA', line=dict(color='#FF00FF', width=2)))
+                fig_k.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['MA60'], name='60MA', line=dict(color='#00FFFF', width=1.5)))
                 
-                # 🛠️ 軌道二：手機原生極速折線圖雙保險 (防 Plotly 被手機瀏覽器阻擋)
-                st.markdown("**📉 收盤價與均線趨勢對照 (手機原生安全流)**")
+                fig_k.update_layout(
+                    template="plotly_dark", height=420, xaxis_rangeslider_visible=False,
+                    margin=dict(l=10, r=10, t=10, b=10),
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+                )
+                st.plotly_chart(fig_k, use_container_width=True)
+                
+                # 🛠️ 手機原生折線圖安全流
+                st.markdown("**📉 趨勢對照折線圖 (備用防護)**")
                 chart_data = plot_df.set_index('Date')[['Close', 'MA5', 'MA20']]
                 st.line_chart(chart_data, use_container_width=True)
+            else:
+                st.error(f"⚠️ 找不到 {current_view_stock} 的 K 線資料，請點擊上方按鈕重新掃描。")
