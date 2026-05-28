@@ -130,7 +130,7 @@ if st.button("🏛️ 啟動 12 大科技板塊即時盤後掃描", type="primar
     with st.spinner("🚀 正在大範圍巡檢 12 大板塊官方實體股..."):
         raw_stock_pool = get_all_tw_stocks()
         
-        # 只抓過去 120 天的資料，大幅減少記憶體開銷
+        # 只抓過去 120 天的資料
         start_dt = (today_tw - timedelta(days=120)).strftime("%Y-%m-%d")
         end_dt = today_tw.strftime("%Y-%m-%d")
         
@@ -177,16 +177,14 @@ if st.button("🏛️ 啟動 12 大科技板塊即時盤後掃描", type="primar
             if 'Date' not in df_all.columns and 'index' in df_all.columns:
                 df_all = df_all.rename(columns={'index': 'Date'})
                 
-            # 全量數據保留給 K 線圖
             st.session_state.raw_df_all = df_all
             
-            # 計算當日訊號
             df_today_signals = calculate_indicators_and_signals(df_all)
             df_filtered = filter_strategy(df_today_signals, tolerance=m_tolerance)
             st.session_state.scan_results = df_filtered
             
             if not df_filtered.empty:
-                st.session_state.mobile_selected_stock = df_filtered.iloc[0]['Stock_ID']
+                st.session_state.mobile_selected_stock = str(df_filtered.iloc[0]['Stock_ID'])
             st.success(f"🎉 掃描成功！已完成監控 12 大板塊 {df_today_signals['Stock_ID'].nunique()} 檔有效實體科技個股。")
 
 # ==========================================
@@ -200,6 +198,9 @@ if st.session_state.scan_results is not None:
     if st.session_state.scan_results.empty:
         st.warning(f"ℹ️ 當前篩選條件下無符合條件的科技股。")
     else:
+        # 保留一個乾淨的 Stock_ID 串列供按鈕與畫圖使用
+        candidate_list = [str(x) for x in st.session_state.scan_results['Stock_ID'].tolist()]
+        
         display_df = st.session_state.scan_results[['Stock_ID', 'Close', 'MA20', 'Dist_5MA', 'AI_Win_Rate']].copy()
         display_df['Dist_5MA'] = (display_df['Dist_5MA'] * 100).round(2).astype(str) + "%"
         display_df['AI_Win_Rate'] = (display_df['AI_Win_Rate'] * 100).round(1).astype(str) + "%"
@@ -213,11 +214,12 @@ if st.session_state.scan_results is not None:
         st.markdown("---")
         st.subheader("📱 手機專用：點擊下方按鈕看日 K 線圖")
         
-        candidate_list = st.session_state.scan_results['股票代碼'].tolist() if '股票代碼' in display_df.columns else st.session_state.scan_results['Stock_ID'].tolist()
-        
         # 限制手機按鈕最大顯示數量 (前 15 強)
         display_buttons = candidate_list[:15]
         
+        if st.session_state.mobile_selected_stock not in display_buttons and display_buttons:
+            st.session_state.mobile_selected_stock = display_buttons[0]
+            
         cols = st.columns(3)
         for idx, s_id in enumerate(display_buttons):
             col_target = cols[idx % 3]
@@ -228,7 +230,7 @@ if st.session_state.scan_results is not None:
                 st.session_state.mobile_selected_stock = s_id
                 st.rerun()
                 
-        current_view_stock = st.session_state.mobile_selected_stock if st.session_state.mobile_selected_stock else candidate_list[0]
+        current_view_stock = st.session_state.mobile_selected_stock
             
         if current_view_stock and st.session_state.raw_df_all is not None:
             st.markdown(f"### 📈 正在檢視日 K 線：**{current_view_stock}**")
@@ -236,25 +238,25 @@ if st.session_state.scan_results is not None:
             stock_k_data = st.session_state.raw_df_all[st.session_state.raw_df_all['Stock_ID'] == current_view_stock].sort_values('Date')
             plot_df = stock_k_data.tail(90)
             
-            fig_k = go.Figure()
-            fig_k.add_trace(go.Candlestick(
-                x=plot_df['Date'], open=plot_df['Open'], high=plot_df['High'], low=plot_df['Low'], close=plot_df['Close'], name='日 K 線',
-                increasing_line_color='#FF3333', decreasing_line_color='#00AA00'
-            ))
-            
-            # 重新計算繪圖用的均線，確保單檔 K 線圖完整呈現
-            plot_df = plot_df.copy()
-            plot_df['MA5'] = plot_df['Close'].rolling(window=5).mean()
-            plot_df['MA20'] = plot_df['Close'].rolling(window=20).mean()
-            plot_df['MA60'] = plot_df['Close'].rolling(window=60).mean()
-            
-            fig_k.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['MA5'], name='5MA', line=dict(color='#FFDD00', width=1.5)))
-            fig_k.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['MA20'], name='20MA', line=dict(color='#FF00FF', width=2)))
-            fig_k.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['MA60'], name='60MA', line=dict(color='#00FFFF', width=1.5)))
-            
-            fig_k.update_layout(
-                template="plotly_dark", height=450, xaxis_rangeslider_visible=False,
-                margin=dict(l=10, r=10, t=20, b=10),
-                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-            )
-            st.plotly_chart(fig_k, use_container_width=True)
+            if not plot_df.empty:
+                fig_k = go.Figure()
+                fig_k.add_trace(go.Candlestick(
+                    x=plot_df['Date'], open=plot_df['Open'], high=plot_df['High'], low=plot_df['Low'], close=plot_df['Close'], name='日 K 線',
+                    increasing_line_color='#FF3333', decreasing_line_color='#00AA00'
+                ))
+                
+                plot_df = plot_df.copy()
+                plot_df['MA5'] = plot_df['Close'].rolling(window=5).mean()
+                plot_df['MA20'] = plot_df['Close'].rolling(window=20).mean()
+                plot_df['MA60'] = plot_df['Close'].rolling(window=60).mean()
+                
+                fig_k.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['MA5'], name='5MA', line=dict(color='#FFDD00', width=1.5)))
+                fig_k.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['MA20'], name='20MA', line=dict(color='#FF00FF', width=2)))
+                fig_k.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['MA60'], name='60MA', line=dict(color='#00FFFF', width=1.5)))
+                
+                fig_k.update_layout(
+                    template="plotly_dark", height=450, xaxis_rangeslider_visible=False,
+                    margin=dict(l=10, r=10, t=20, b=10),
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+                )
+                st.plotly_chart(fig_k, use_container_width=True)
