@@ -254,7 +254,7 @@ if st.session_state.scan_results is not None:
             
             fig_k.update_layout(
                 template="plotly_dark", height=450, xaxis_rangeslider_visible=False,
-                margin=dict(l=10, r=10, t=20 night, b=10),
+                margin=dict(l=10, r=10, t=20, b=10),
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
             )
             st.plotly_chart(fig_k, use_container_width=True)
