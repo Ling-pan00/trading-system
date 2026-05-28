@@ -19,7 +19,7 @@ st.caption(f"目前台北時間：{datetime.now(tw_tz).strftime('%Y-%m-%d %H:%M:
 
 st.info("🎯 **當前監控產業**：電機機械、電器電纜、化學工業、半導體業、電腦週邊、光電業、通信網路、電子組件、電子通路、資訊服務、其他電子、數位雲端。")
 
-# 初始化 Session State
+# 核心記憶池初始化 (確保重新整理時資料不流失)
 if 'scan_results' not in st.session_state:
     st.session_state.scan_results = None
 if 'raw_df_all' not in st.session_state:
@@ -31,7 +31,6 @@ if 'mobile_selected_stock' not in st.session_state:
 # 2. 核心功能：台股 12 大科技/機電板塊官方實體股白名單
 # ==========================================
 def get_all_tw_stocks():
-    """內建 12 大產業真正在交易的核心科技與機電代碼"""
     stocks = [
         # 電機機械與電器電纜
         1503, 1504, 1513, 1514, 1519, 1521, 1522, 1524, 1525, 1526, 1527, 1530, 1531, 1532, 1533, 1535, 1536, 1537, 
@@ -75,12 +74,12 @@ def get_all_tw_stocks():
     return list(set(stock_pool))
 
 # ==========================================
-# 3. 量化指標運算 (大幅減少數據深度，保護記憶體)
+# 3. 量化指標運算 
 # ==========================================
 def calculate_indicators_and_signals(all_data):
     processed_list = []
     for stock_id, df in all_data.groupby('Stock_ID'):
-        if len(df) < 65:  # 足夠計算 60MA 即可
+        if len(df) < 65:
             continue
         df = df.copy().sort_values('Date')
         
@@ -91,13 +90,12 @@ def calculate_indicators_and_signals(all_data):
         df['Bias_20'] = (df['Close'] - df['MA20']) / df['MA20']
         df['Dist_5MA'] = (df['Close'] - df['MA5']) / df['MA5']
         
-        # 精簡 AI 評分模型
         trend_score = np.where(df['MA20'] > df['MA60'], 0.6, 0.4)
         bias_score = np.where(df['Bias_20'].abs() < 0.1, 0.15, 0.05)
         vol_score = np.where(df['Volume'] > df['Volume'].rolling(5).mean(), 0.1, 0.05)
         
         df['AI_Win_Rate'] = trend_score + bias_score + vol_score
-        processed_list.append(df.tail(1))  # 我們只需要最新一天的結果
+        processed_list.append(df.tail(1))
         
     if not processed_list:
         return pd.DataFrame()
@@ -123,14 +121,8 @@ st.sidebar.header("⚙️ 篩選設定")
 m_tolerance = st.sidebar.slider("5MA 貼近容忍度 (±%)", 1, 15, 8) / 100
 
 if st.button("🏛️ 啟動 12 大科技板塊即時盤後掃描", type="primary"):
-    st.session_state.scan_results = None
-    st.session_state.raw_df_all = None
-    st.session_state.mobile_selected_stock = None
-    
     with st.spinner("🚀 正在大範圍巡檢 12 大板塊官方實體股..."):
         raw_stock_pool = get_all_tw_stocks()
-        
-        # 只抓過去 120 天的資料
         start_dt = (today_tw - timedelta(days=120)).strftime("%Y-%m-%d")
         end_dt = today_tw.strftime("%Y-%m-%d")
         
@@ -147,13 +139,8 @@ if st.button("🏛️ 啟動 12 大科技板塊即時盤後掃描", type="primar
             p_bar.progress((idx + 1) / len(chunks))
             try:
                 df_chunk_raw = yf.download(
-                    tickers=chunk, 
-                    start=start_dt, 
-                    end=end_dt, 
-                    auto_adjust=True, 
-                    group_by='ticker', 
-                    progress=False, 
-                    timeout=15
+                    tickers=chunk, start=start_dt, end=end_dt, 
+                    auto_adjust=True, group_by='ticker', progress=False, timeout=15
                 )
                 if df_chunk_raw.empty: 
                     continue
@@ -177,28 +164,26 @@ if st.button("🏛️ 啟動 12 大科技板塊即時盤後掃描", type="primar
             if 'Date' not in df_all.columns and 'index' in df_all.columns:
                 df_all = df_all.rename(columns={'index': 'Date'})
                 
+            # 🔥 關鍵修復：直接將資料寫入全域 Session State 記憶池
             st.session_state.raw_df_all = df_all
-            
             df_today_signals = calculate_indicators_and_signals(df_all)
             df_filtered = filter_strategy(df_today_signals, tolerance=m_tolerance)
             st.session_state.scan_results = df_filtered
             
             if not df_filtered.empty:
                 st.session_state.mobile_selected_stock = str(df_filtered.iloc[0]['Stock_ID'])
-            st.success(f"🎉 掃描成功！已完成監控 12 大板塊 {df_today_signals['Stock_ID'].nunique()} 檔有效實體科技個股。")
 
 # ==========================================
-# 6. 報表與視覺化結果呈現
+# 6. 報表與視覺化結果呈現 (移到外部，確保重新整理時依然渲染)
 # ==========================================
-st.markdown("---")
-
 if st.session_state.scan_results is not None:
+    st.markdown("---")
+    st.success(f"🎉 掃描成功！目前已完成監控並保留數據。")
     st.subheader(f"📋 12大核心板塊：今日 AI 多頭貼線選股清單")
     
     if st.session_state.scan_results.empty:
         st.warning(f"ℹ️ 當前篩選條件下無符合條件的科技股。")
     else:
-        # 保留一個乾淨的 Stock_ID 串列供按鈕與畫圖使用
         candidate_list = [str(x) for x in st.session_state.scan_results['Stock_ID'].tolist()]
         
         display_df = st.session_state.scan_results[['Stock_ID', 'Close', 'MA20', 'Dist_5MA', 'AI_Win_Rate']].copy()
@@ -214,7 +199,6 @@ if st.session_state.scan_results is not None:
         st.markdown("---")
         st.subheader("📱 手機專用：點擊下方按鈕看日 K 線圖")
         
-        # 限制手機按鈕最大顯示數量 (前 15 強)
         display_buttons = candidate_list[:15]
         
         if st.session_state.mobile_selected_stock not in display_buttons and display_buttons:
@@ -226,6 +210,7 @@ if st.session_state.scan_results is not None:
             is_active = (s_id == st.session_state.mobile_selected_stock)
             btn_type = "primary" if is_active else "secondary"
             
+            # 🔥 點擊按鈕直接更改選取代碼，並強制頁面更新，此時原始 K 線資料在 session_state 不會消失
             if col_target.button(f"📊 {s_id}", key=f"btn_{s_id}", type=btn_type, use_container_width=True):
                 st.session_state.mobile_selected_stock = s_id
                 st.rerun()
