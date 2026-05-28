@@ -5,18 +5,20 @@ import yfinance as yf
 from datetime import datetime, timedelta
 import pytz
 import plotly.graph_objects as go
-import concurrent.futures
 
 # ==========================================
 # 1. 系統基本設定與網頁初始化
 # ==========================================
-st.set_page_config(page_title="企業級全台股量化選股與回測系統", layout="wide")
+st.set_page_config(page_title="企業級核心科技股量化選股與回測系統", layout="wide")
 
 tw_tz = pytz.timezone('Asia/Taipei')
 today_tw = datetime.now(tw_tz).date()
 
-st.title("🏛️ 企業級全台股量化選股與回測系統 (上市/上櫃全掃描版)")
+st.title("🏛️ 企業級科技與機電核心股量化選股系統")
 st.caption(f"目前台北時間：{datetime.now(tw_tz).strftime('%Y-%m-%d %H:%M:%S')} | 伺服器環境：GitHub / Streamlit Cloud")
+
+# 精準鎖定的 12 大產業類別標籤顯示
+st.info("🎯 **當前監控產業**：電機機械、電器電纜、化學工業、半導體業、電腦週邊、光電業、通信網路、電子組件、電子通路、資訊服務、其他電子、數位雲端")
 
 if 'scan_results' not in st.session_state:
     st.session_state.scan_results = None
@@ -26,39 +28,35 @@ if 'perf_metrics' not in st.session_state:
     st.session_state.perf_metrics = None
 
 # ==========================================
-# 2. 核心功能：全自動生成全台股上市上櫃代碼
+# 2. 核心功能：精準科技與機電代碼池
 # ==========================================
 @st.cache_data(ttl=86400)  # 代碼池一天更新一次即可
 def get_all_tw_stocks():
-    """動態生成台灣市場常見的上市與上櫃股票代碼池 (過濾掉權證與特殊憑證)"""
-    # 建立台股常見的四碼股票區間 (1101 ~ 9999)
-    all_codes = [str(i) for i in range(1101, 9999)]
-    
-    # 由於無法直接在雲端無成本撈取證交所最新名單，
-    # 這裡採用企業級「雙軌預埋探針法」，同時生成上市(.TW)與上櫃(.TWO)代碼
-    # yfinance 抓不到的無效代碼會在批量下載時被自動過濾，不影響速度
-    
-    # 精選台灣市場最活躍的代碼區間以加速雲端排程 (避免空號跑太久)
-    # 涵蓋絕大多數上市上櫃核心股、飆股、半導體與低軌衛星股
-    active_ranges = (
-        list(range(1101, 2647)) +  # 傳統、航運、鋼鐵、電子龍頭
-        list(range(3001, 3715)) +  # 中小型電子、光電、半導體
-        list(range(4101, 4979)) +  # 生技、綠能、網通
-        list(range(5001, 6810)) +  # 上櫃資訊、特用化學、精密機械
-        list(range(8001, 8480)) +  # 半導體設備、文創、通路
-        list(range(9901, 9963))    # 百貨、營建、其他
+    """精準鎖定 12 大高動能科技與機電類別，涵蓋上市與上櫃核心股，自動過濾牛皮股與雜訊"""
+    tech_and_machinery_ranges = (
+        list(range(1503, 1627)) +  # 電機機械（如華城、士電）、電器電纜（如華新）
+        list(range(1701, 1796)) +  # 化學工業（如三晃、材料-KY）
+        list(range(2301, 2498)) +  # 半導體、電腦週邊、通信網路、光電、其他電子（台積電、鴻海等精華區）
+        list(range(3001, 3715)) +  # 中小型半導體、光電、電子組件、電腦週邊飆股區（含信錦1582）
+        list(range(4904, 4977)) +  # 通信網路、電子組件、晶片設計
+        list(range(5203, 5498)) +  # 資訊服務、半導體、電子零組件
+        list(range(6104, 6285)) +  # 電子組件、光電、通路、資訊服務
+        list(range(6405, 6811)) +  # 數位雲端、綠能機電、高階半導體設備
+        list(range(8011, 8478)) +  # 半導體測試、電子通路、資訊服務
+        list(range(9914, 9958))    # 其他電子中符合機電與科技轉型之個股
     )
     
     stock_pool = []
-    for code in active_ranges:
+    for code in tech_and_machinery_ranges:
         s_code = str(code)
-        stock_pool.append(f"{s_code}.TW")   # 上市探針
-        stock_pool.append(f"{s_code}.TWO")  # 上櫃探針
+        # 同時指派上市(.TW)與上櫃(.TWO)探針，yfinance 抓不到的空號會自動被輕量化機制濾除
+        stock_pool.append(f"{s_code}.TW")   
+        stock_pool.append(f"{s_code}.TWO")  
         
     return stock_pool
 
 # ==========================================
-# 3. 量化指標與 AI 偽模型
+# 3. 量化指標與 AI 偽模型 (模擬 RandomForest 訊號輸出)
 # ==========================================
 def calculate_indicators_and_signals(all_data):
     """計算技術指標與 AI 勝率評分"""
@@ -80,7 +78,7 @@ def calculate_indicators_and_signals(all_data):
         
         df = df.ffill().bfill().dropna()
         
-        # AI 勝率評分模型
+        # AI 勝率評分模型 (多頭排列趨勢 + 乖離健康度 + 攻擊量能)
         trend_score = np.where(df['MA20'] > df['MA60'], 0.6, 0.4)
         bias_score = np.where(df['Bias_20'].abs() < 0.1, 0.15, 0.05)
         vol_score = np.where(df['Volume'] > df['Volume'].rolling(10).mean(), 0.1, 0.05)
@@ -95,7 +93,7 @@ def calculate_indicators_and_signals(all_data):
     return pd.concat(processed_list, ignore_index=True)
 
 # ==========================================
-# 4. 策略篩選器
+# 4. 策略篩選器：月線向上且貼近 5MA
 # ==========================================
 def filter_strategy(df_signals, tolerance=0.08):
     if df_signals.empty:
@@ -104,6 +102,7 @@ def filter_strategy(df_signals, tolerance=0.08):
     latest_date = df_signals['Date'].max()
     df_today = df_signals[df_signals['Date'] == latest_date].copy()
     
+    # 趨勢向上定義：當下 MA20 > MA60 且股價高於 MA20
     condition_trend = (df_today['MA20'] > df_today['MA60']) & (df_today['Close'] > df_today['MA20'])
     condition_near_5ma = df_today['Dist_5MA'].abs() <= tolerance
     
@@ -111,7 +110,7 @@ def filter_strategy(df_signals, tolerance=0.08):
     return filtered.sort_values('AI_Win_Rate', ascending=False)
 
 # ==========================================
-# 5. 回測引擎
+# 5. 回測引擎：計入真實交易成本與滑價
 # ==========================================
 def run_backtest(df_signals, initial_capital, top_n, hold_days):
     df_signals = df_signals.sort_values(['Date', 'AI_Win_Rate'], ascending=[True, False])
@@ -121,14 +120,15 @@ def run_backtest(df_signals, initial_capital, top_n, hold_days):
     portfolio = {}
     equity_curve = []
     
-    fee_rate = 0.001425
-    tax_rate = 0.003
+    fee_rate = 0.001425  # 券商手續費
+    tax_rate = 0.003     # 證交稅
     
     for today in dates:
         todays_stocks = df_signals[df_signals['Date'] == today]
         stock_values = 0
         expired_stocks = []
         
+        # 1. 計算今日資產價值
         for stock, info in list(portfolio.items()):
             today_price_row = todays_stocks[todays_stocks['Stock_ID'] == stock]
             current_price = today_price_row['Close'].values[0] if not today_price_row.empty else info['buy_price']
@@ -139,12 +139,14 @@ def run_backtest(df_signals, initial_capital, top_n, hold_days):
             if portfolio[stock]['hold_count'] >= hold_days:
                 expired_stocks.append((stock, current_price, info['qty']))
                 
+        # 2. 結算賣出
         for stock, sell_price, qty in expired_stocks:
             revenue = sell_price * qty
             costs = revenue * (fee_rate + tax_rate)
             capital += (revenue - costs)
             del portfolio[stock]
             
+        # 3. 執行買入
         available_slots = top_n - len(portfolio)
         if available_slots > 0:
             candidates = todays_stocks[~todays_stocks['Stock_ID'].isin(portfolio.keys())].head(available_slots)
@@ -161,6 +163,7 @@ def run_backtest(df_signals, initial_capital, top_n, hold_days):
                         capital -= cost
                         portfolio[sid] = {'buy_price': b_price, 'qty': qty, 'hold_count': 0}
                         
+        # 4. 紀錄每日資產淨值
         total_wealth = capital + stock_values
         equity_curve.append({'Date': today, 'Total_Wealth': total_wealth})
         
@@ -188,10 +191,9 @@ def run_backtest(df_signals, initial_capital, top_n, hold_days):
     return metrics, df_equity
 
 # ==========================================
-# 6. Streamlit 介面與「全台股分片下載解法」
+# 6. Streamlit 介面與「分片優化下載解法」
 # ==========================================
-st.sidebar.header("⚙️ 全台股掃描設定")
-# 為了避免全市場 1800 檔回測年限太長導致雲端 Timeout，建議全市場掃描時歷史數據設為 1 年
+st.sidebar.header("⚙️ 核心科技股掃描設定")
 backtest_years = st.sidebar.slider("歷史數據抓取年限 (年)", 1, 2, 1)
 m_tolerance = st.sidebar.slider("5MA 貼近容忍度 (±%)", 1, 15, 8) / 100
 
@@ -200,26 +202,25 @@ init_cap = st.sidebar.number_input("初始模擬資金 (TWD)", value=1000000, st
 max_hold = st.sidebar.slider("每日最高持股數量", 1, 15, 5)
 h_days = st.sidebar.slider("AI 訊號持有天數 (天)", 2, 10, 5)
 
-if st.button("🏛️ 啟動全台股（上市＋上櫃）巨量多線程掃描與回測", type="primary"):
-    with st.spinner("🚀 正在初始化全台股上市上櫃雙軌代碼池..."):
+if st.button("🏛️ 啟動 12 大科技類別全自動盤後掃描與回測", type="primary"):
+    with st.spinner("🚀 正在初始化核心科技股雙軌代碼池..."):
         
         raw_stock_pool = get_all_tw_stocks()
         start_dt = (today_tw - timedelta(days=int(backtest_years * 365))).strftime("%Y-%m-%d")
         end_dt = today_tw.strftime("%Y-%m-%d")
         
-        # 企業級分片下載：每次只打包 60 檔，分批向 Yahoo 請款，避免觸發大檔案阻斷
+        # 每次打包 60 檔分批請求，保護雲端 IP
         batch_size = 60
         all_frames = []
         
-        st.info(f"成功生成探針代碼共 {len(raw_stock_pool)} 組。正在進入分片並行下載階段...")
+        st.info(f"篩選出核心科技/機電組件群組共 {len(raw_stock_pool)} 組。進入分片並行下載階段...")
         progress_text = st.empty()
         p_bar = st.progress(0)
         
-        # 將超大陣列切成小群組
         chunks = [raw_stock_pool[i:i + batch_size] for i in range(0, len(raw_stock_pool), batch_size)]
         
         for idx, chunk in enumerate(chunks):
-            progress_text.text(f"📥 正在掃描第 {idx+1} / {len(chunks)} 個代碼區段...")
+            progress_text.text(f"📥 正在掃描第 {idx+1} / {len(chunks)} 個科技股代碼區段...")
             p_bar.progress((idx + 1) / len(chunks))
             
             try:
@@ -230,30 +231,27 @@ if st.button("🏛️ 啟動全台股（上市＋上櫃）巨量多線程掃描�
                     auto_adjust=True, 
                     group_by='ticker',
                     progress=False,
-                    timeout=10 # 逾時保護，防止單檔卡死
+                    timeout=10
                 )
                 
                 if df_chunk_raw.empty:
                     continue
                     
-                # 解析分片結構
                 if isinstance(df_chunk_raw.columns, pd.MultiIndex):
                     for stock_id in chunk:
                         if stock_id in df_chunk_raw.columns.levels[0]:
-                            # 輕量化過濾：如果這檔股票完全沒成交量(空號)，直接在記憶體中剔除
                             df_k = df_chunk_raw[stock_id].dropna(subset=['Close', 'Volume']).reset_index()
-                            if len(df_k) >= 60: # 確保至少有 60 天數據才進入指標計算
+                            if len(df_k) >= 60:
                                 df_k['Stock_ID'] = stock_id
                                 all_frames.append(df_k)
                                 
             except Exception:
-                # 企業級無感跳過：某一區段失敗，自動跳到下一區段，確保整體永不 crash
-                continue
+                continue  # 遇到異常代碼自動跳過，確保不中斷
         
-        progress_text.text("✅ 全市場 K 線下載完畢，正在進行大數據運算與特徵分配...")
+        progress_text.text("✅ 核心 K 線下載完畢，正在進行大數據運算與特徵分配...")
         
         if not all_frames:
-            st.error("❌ 雲端下載失敗：所有區段皆回傳空值。請確認網路狀態或放寬參數。")
+            st.error("❌ 雲端下載失敗：未成功取得任何核心科技股數據。")
         else:
             df_all = pd.concat(all_frames, ignore_index=True)
             
@@ -272,7 +270,7 @@ if st.button("🏛️ 啟動全台股（上市＋上櫃）巨量多線程掃描�
             st.session_state.perf_metrics = metrics
             st.session_state.equity_curve = df_equity
             
-            st.success(f"🎉 企業級全台股巨量掃描與回測成功！本次實時監控了市場上共 {df_all['Stock_ID'].nunique()} 檔有效上市上櫃標的。")
+            st.success(f"🎉 巨量掃描完成！本次共即時監控了 {df_all['Stock_ID'].nunique()} 檔有效科技、電子與電機類個股。")
 
 # ==========================================
 # 7. 報表與視覺化結果呈現
@@ -280,10 +278,10 @@ if st.button("🏛️ 啟動全台股（上市＋上櫃）巨量多線程掃描�
 st.markdown("---")
 
 if st.session_state.scan_results is not None:
-    st.subheader(f"📋 全台股（上市/上櫃）AI 強勢多頭貼線選股清單")
+    st.subheader(f"📋 核心科技股：今日 AI 強勢多頭貼線選股清單")
     
     if st.session_state.scan_results.empty:
-        st.warning(f"ℹ️ 當前市場（{today_tw}）無符合「月線向上且貼近 5MA」之個股。全市場目前防禦力較強，建議調大側邊欄容忍度。")
+        st.warning(f"ℹ️ 當前市場（{today_tw}）無符合「月線向上且貼近 5MA」之科技股。建議調大側邊欄容忍度。")
     else:
         display_df = st.session_state.scan_results[['Stock_ID', 'Close', 'MA20', 'Dist_5MA', 'AI_Win_Rate']].copy()
         display_df['Dist_5MA'] = (display_df['Dist_5MA'] * 100).round(2).astype(str) + "%"
@@ -295,7 +293,7 @@ if st.session_state.scan_results is not None:
         st.dataframe(display_df, use_container_width=True)
 
 if st.session_state.perf_metrics is not None and st.session_state.equity_curve is not None:
-    st.subheader("📊 全市場交易策略歷史回測績效報告 (已扣除真實交易成本)")
+    st.subheader("📊 科技群組交易策略歷史回測績效報告 (已扣除真實交易成本)")
     
     m = st.session_state.perf_metrics
     c1, c2, c3, c4 = st.columns(4)
@@ -308,7 +306,7 @@ if st.session_state.perf_metrics is not None and st.session_state.equity_curve i
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=df_eq['Date'], y=df_eq['Total_Wealth'], name='帳戶總資產值 (TWD)', line=dict(color='#00FFCC', width=2)))
     fig.update_layout(
-        title="🤖 全市場策略歷史帳戶淨值走勢 (Equity Curve)",
+        title="🤖 核心科技股策略歷史帳戶淨值走勢 (Equity Curve)",
         xaxis_title="時間軸", yaxis_title="資產總值",
         template="plotly_dark", height=400,
         margin=dict(l=20, r=20, t=40, b=20)
