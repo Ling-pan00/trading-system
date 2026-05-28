@@ -38,7 +38,7 @@ def get_all_tw_stocks():
         list(range(1503, 1627)) +  
         list(range(1701, 1796)) +  
         list(range(2301, 2498)) +  
-        list(range(3001, 3715)) +  
+        list(range(3001, 3715)) +  # 含信錦 1582
         list(range(4904, 4977)) +  
         list(range(5203, 5498)) +  
         list(range(6104, 6285)) +  
@@ -240,12 +240,11 @@ st.markdown("---")
 
 if st.session_state.scan_results is not None:
     st.subheader(f"📋 核心科技股：今日 AI 強勢多頭貼線選股清單")
-    st.caption("💡 提示：你可以**直接用滑鼠點擊下方表格的任一橫列（會整行亮起來）**，下方的日 K 技術線圖就會立刻同步切換！")
     
     if st.session_state.scan_results.empty:
         st.warning(f"ℹ️ 當前市場無符合之科技股。")
     else:
-        # 建立乾淨漂亮的顯示表
+        # 顯示乾淨漂亮的靜態資料表（避免版本衝突）
         display_df = st.session_state.scan_results[['Stock_ID', 'Close', 'MA20', 'Dist_5MA', 'AI_Win_Rate']].copy()
         display_df['Dist_5MA'] = (display_df['Dist_5MA'] * 100).round(2).astype(str) + "%"
         display_df['AI_Win_Rate'] = (display_df['AI_Win_Rate'] * 100).round(1).astype(str) + "%"
@@ -253,26 +252,24 @@ if st.session_state.scan_results is not None:
         display_df['MA20'] = display_df['MA20'].round(2)
         display_df.columns = ['股票代碼', '今日收盤價', '月線(20MA)', '偏離5MA幅度', 'AI 預估波段勝率']
         
-        # 【核心修正】：開啟 on_select 功能，允許滑桿點擊，並強制單選模式 (single)
-        event = st.dataframe(
-            display_df, 
-            use_container_width=True,
-            on_select="rerun",
-            selection_mode="single"
+        # 渲染最穩定的靜態表格
+        st.dataframe(display_df, use_container_width=True)
+
+        # ==========================================
+        # 🔥 修正區：改用全版本通殺的下拉選單進行日 K 連動
+        # ==========================================
+        st.markdown("---")
+        st.subheader("🔍 互動式個股日 K 線圖監控區")
+        
+        # 提取股票代號清單
+        candidate_list = st.session_state.scan_results['Stock_ID'].tolist()
+        
+        # 透過強大的 st.selectbox 來切換日 K，永不報錯且直覺
+        selected_stock = st.selectbox(
+            "👉 請選擇你想檢視技術線圖的股票代碼：", 
+            options=candidate_list,
+            index=0  # 預設選取第一檔
         )
-        
-        # ==========================================
-        # 🔥 點擊表格連動日 K 線繪製區
-        # ==========================================
-        selected_stock = None
-        
-        # 優先權 1：檢查使用者有沒有在表格上點擊某一行
-        if event and 'rows' in event.get('selection', {}) and len(event['selection']['rows']) > 0:
-            selected_row_idx = event['selection']['rows'][0]
-            selected_stock = display_df.iloc[selected_row_idx]['股票代碼']
-        else:
-            # 優先權 2：沒點選時，預設顯示名單中的第一檔股票，避免畫面空白
-            selected_stock = display_df.iloc[0]['股票代碼']
             
         if selected_stock and st.session_state.raw_df_all is not None:
             st.markdown(f"### 📊 當前檢視：{selected_stock}")
