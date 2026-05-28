@@ -4,249 +4,164 @@ import numpy as np
 import yfinance as yf
 from datetime import datetime, timedelta
 import pytz
-import plotly.graph_objects as go
 
 # ==========================================
-# 1. 系統基本設定與網頁初始化
+# 1. 初始化與網頁設定
 # ==========================================
-st.set_page_config(page_title="12大核心科技股即時篩選系統", layout="wide")
+st.set_page_config(page_title="12大科技核心股選股系統", layout="wide")
 
 tw_tz = pytz.timezone('Asia/Taipei')
 today_tw = datetime.now(tw_tz).date()
 
-st.title("🏛️ 12大科技與機電核心股：即時 AI 選股系統")
-st.caption(f"目前台北時間：{datetime.now(tw_tz).strftime('%Y-%m-%d %H:%M:%S')} | 環境：極速手機優化版")
+st.title("🏛️ 12大科技與機電核心股：AI 即時選股")
+st.caption(f"目前時間：{datetime.now(tw_tz).strftime('%Y-%m-%d %H:%M:%S')} | 手機極速防錯版")
 
-st.info("🎯 **當前監控產業**：電機機械、電器電纜、化學工業、半導體業、電腦週邊、光電業、通信網路、電子組件、電子通路、資訊服務、其他電子、數位雲端。")
-
-# 核心記憶池初始化
-if 'scan_results' not in st.session_state:
-    st.session_state.scan_results = None
-if 'raw_df_all' not in st.session_state:
-    st.session_state.raw_df_all = None  
-if 'mobile_selected_stock' not in st.session_state:
-    st.session_state.mobile_selected_stock = None  
+# 初始化 Session State 記憶池
+if 'all_stock_data' not in st.session_state:
+    st.session_state.all_stock_data = {}  # 用字典存每檔股票的乾淨 DataFrame
+if 'filtered_summary' not in st.session_state:
+    st.session_state.filtered_summary = None
 
 # ==========================================
-# 2. 核心功能：台股 12 大科技/機電板塊官方實體股白名單
+# 2. 精簡化核心核心科技股名單 (挑選最活躍的重要代表股，大幅提升下載成功率)
 # ==========================================
-def get_all_tw_stocks():
-    stocks = [
-        # 電機機械與電器電纜
-        1503, 1504, 1513, 1514, 1519, 1521, 1522, 1524, 1525, 1526, 1527, 1530, 1531, 1532, 1533, 1535, 1536, 1537, 
-        1538, 1539, 1541, 1558, 1560, 1582, 1583, 1589, 1590, 1592, 1597, 1603, 1604, 1605, 1608, 1609, 1611, 1612, 
-        1615, 1616, 1617, 1618, 1625, 
-        # 化學工業
-        1704, 1710, 1711, 1712, 1713, 1714, 1717, 1718, 1721, 1722, 1723, 1725, 1727, 1730, 1732, 1735, 1742, 1750, 
-        1773, 1776, 1783, 1786, 1789, 1795, 
-        # 半導體核心群
-        2302, 2303, 2329, 2330, 2337, 2338, 2344, 2351, 2363, 2369, 2379, 2388, 2408, 2434, 2436, 2441, 2449, 2454, 
-        2458, 2481, 3006, 3016, 3034, 3035, 3041, 3054, 3189, 3228, 3231, 3260, 3264, 3289, 3374, 3413, 3438, 3529, 
-        3532, 3545, 3557, 3567, 3583, 3588, 3592, 3653, 3661, 3680, 3686, 3707, 4919, 4952, 4961, 4967, 4968, 5269, 
-        5274, 5347, 5471, 5483, 6138, 6147, 6182, 6223, 6239, 6243, 6257, 6271, 6411, 6415, 6435, 6451, 6462, 6477, 
-        6488, 6510, 6515, 6525, 6531, 6533, 6548, 6568, 6573, 6670, 6679, 6684, 6719, 6756, 6770, 6811, 8016, 8028, 
-        8054, 8081, 8261, 8271, 8299, 
-        # 電腦週邊、光電、通信網路
-        2312, 2313, 2314, 2317, 2323, 2324, 2345, 2352, 2353, 2356, 2357, 2360, 2362, 2364, 2365, 2376, 2377, 2382, 
-        2393, 2395, 2397, 2405, 2406, 2409, 2412, 2417, 2419, 2421, 2424, 2425, 2439, 2444, 2450, 2455, 2457, 2474, 
-        2480, 2482, 2484, 2485, 2489, 2495, 2496, 2498, 3005, 3008, 3013, 3017, 3019, 3021, 3022, 3023, 3024, 3026, 
-        3027, 3030, 3031, 3032, 3037, 3044, 3045, 3046, 3047, 3048, 3049, 3050, 3051, 3055, 3057, 3059, 3060, 3062, 
-        3071, 3090, 3094, 3130, 3149, 3211, 3213, 3217, 3218, 3238, 3296, 3305, 3308, 3311, 3312, 3321, 3338, 3356, 
-        3362, 3363, 3376, 3380, 3406, 3437, 3443, 3450, 3454, 3481, 3494, 3501, 3504, 3515, 3518, 3526, 3528, 3533, 
-        3535, 3536, 3540, 3550, 3563, 3576, 3591, 3593, 3596, 3605, 3607, 3609, 3615, 3617, 3622, 3624, 3630, 3652, 
-        3665, 3669, 3673, 3682, 3694, 4904, 4906, 4912, 4915, 4916, 4934, 4935, 4938, 4942, 4943, 4956, 4958, 4960, 
-        4976, 4977, 5215, 5234, 5245, 5258, 5288, 5371, 5388, 5410, 5425, 5457, 5469, 5493, 6112, 6116, 6120, 6125, 
-        6136, 6139, 6141, 6142, 6143, 6152, 6153, 6164, 6166, 6168, 6176, 6189, 6196, 6205, 6206, 6213, 6214, 6217, 
-        6220, 6224, 6230, 6235, 6245, 6251, 6269, 6277, 6278, 6281, 6283, 6285, 6405, 6412, 6414, 6416, 6426, 6442, 
-        6443, 6449, 6470, 6491, 6541, 6550, 6558, 6664, 6668, 6669, 6672, 6674, 6682, 6695, 6698, 8011, 8021, 8027, 
-        8033, 8039, 8046, 8050, 8059, 8069, 8070, 8072, 8086, 8103, 8104, 8105, 8110, 8112, 8114, 8147, 8150, 8163, 
-        8210, 8213, 8215, 8249, 8255, 8289, 8358, 8410, 8431, 9914, 9921, 9945, 9955
+def get_clean_pool():
+    # 這是精選出的核心科技/機電代表股白名單，確保流動性與下載絕對安全
+    core_codes = [
+        2330, 2317, 2454, 2308, 2382, 2303, 3711, 2357, 3231, 2408,
+        1503, 1513, 1519, 1605, 1608, 1795, 1773, 2409, 3481, 3008,
+        2345, 2356, 2376, 2377, 2324, 6239, 4938, 2353, 3037, 3034,
+        2405, 1776, 2302, 5245, 2352, 6682, 6679, 6672, 6667, 1780
     ]
-    
-    stock_pool = []
-    for code in sorted(list(set(stocks))):
-        s_code = str(code)
-        if code < 3000 or (3700 <= code < 4900) or code in [6116, 6269, 6669]:
-            stock_pool.append(f"{s_code}.TW")
+    pool = []
+    for c in core_codes:
+        if c < 3000:
+            pool.append(f"{c}.TW")
         else:
-            stock_pool.append(f"{s_code}.TWO")
+            pool.append(f"{c}.TWO")
+    return pool
+
+# ==========================================
+# 3. 核心下載與運算邏輯 (安全逐檔下載機制)
+# ==========================================
+if st.button("🏛️ 啟動 12 大科技板塊即時盤後掃描", type="primary", use_container_width=True):
+    stock_pool = get_clean_pool()
+    st.session_state.all_stock_data = {} # 清空舊資料
+    
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    
+    success_count = 0
+    summary_rows = []
+    
+    # 逐檔下載，採取最高安全防護
+    for idx, ticker_id in enumerate(stock_pool):
+        status_text.text(f"📥 正在安全下載個股資料 ({idx+1}/{len(stock_pool)}): {ticker_id}")
+        progress_bar.progress((idx + 1) / len(stock_pool))
+        
+        try:
+            # 抓取過去 6 個月的資料，確保足夠計算均線
+            t_obj = yf.Ticker(ticker_id)
+            df = t_obj.history(period="6m", interval="1d")
             
-    return list(set(stock_pool))
-
-# ==========================================
-# 3. 量化指標運算 (穩定版)
-# ==========================================
-def calculate_indicators_and_signals(all_data):
-    processed_list = []
-    for stock_id, df in all_data.groupby('Stock_ID'):
-        if len(df) < 65:
-            continue
-        df = df.copy().sort_values('Date')
-        
-        df['MA5'] = df['Close'].rolling(window=5).mean()
-        df['MA20'] = df['Close'].rolling(window=20).mean()
-        df['MA60'] = df['Close'].rolling(window=60).mean()
-        
-        df['Bias_20'] = (df['Close'] - df['MA20']) / df['MA20']
-        df['Dist_5MA'] = (df['Close'] - df['MA5']) / df['MA5']
-        
-        trend_score = np.where(df['MA20'] > df['MA60'], 0.6, 0.4)
-        bias_score = np.where(df['Bias_20'].abs() < 0.1, 0.15, 0.05)
-        vol_score = np.where(df['Volume'] > df['Volume'].rolling(5).mean(), 0.1, 0.05)
-        
-        df['AI_Win_Rate'] = trend_score + bias_score + vol_score
-        processed_list.append(df.tail(1))
-        
-    if not processed_list:
-        return pd.DataFrame()
-    return pd.concat(processed_list, ignore_index=True)
-
-def filter_strategy(df_today, tolerance=0.08):
-    if df_today.empty:
-        return pd.DataFrame()
-    condition_trend = (df_today['MA20'] > df_today['MA60']) & (df_today['Close'] > df_today['MA20'])
-    condition_near_5ma = df_today['Dist_5MA'].abs() <= tolerance
-    filtered = df_today[condition_trend & condition_near_5ma]
-    return filtered.sort_values('AI_Win_Rate', ascending=False)
-
-# ==========================================
-# 5. 控制與下載邏輯 (解開 MultiIndex 的終極大招)
-# ==========================================
-st.sidebar.header("⚙️ 篩選設定")
-m_tolerance = st.sidebar.slider("5MA 貼近容忍度 (±%)", 1, 15, 8) / 100
-
-if st.button("🏛️ 啟動 12 大科技板塊即時盤後掃描", type="primary"):
-    with st.spinner("🚀 正在大範圍巡檢 12 大板塊官方實體股..."):
-        raw_stock_pool = get_all_tw_stocks()
-        start_dt = (today_tw - timedelta(days=120)).strftime("%Y-%m-%d")
-        end_dt = today_tw.strftime("%Y-%m-%d")
-        
-        batch_size = 50
-        all_frames = []
-        
-        st.info(f"🧬 已載入 12 大板塊共 {len(raw_stock_pool)} 檔實體股。開始安全分流掃描...")
-        progress_text = st.empty()
-        p_bar = st.progress(0)
-        chunks = [raw_stock_pool[i:i + batch_size] for i in range(0, len(raw_stock_pool), batch_size)]
-        
-        for idx, chunk in enumerate(chunks):
-            progress_text.text(f"📥 正在下載第 {idx+1} / {len(chunks)} 個科技股區段...")
-            p_bar.progress((idx + 1) / len(chunks))
-            try:
-                df_chunk_raw = yf.download(
-                    tickers=chunk, start=start_dt, end=end_dt, 
-                    auto_adjust=True, progress=False, timeout=15
-                )
-                if df_chunk_raw.empty: 
-                    continue
-                    
-                # 🔥 🔥 🔥 終極大改寫：徹底打平 yfinance 惡心人的 MultiIndex 欄位結構
-                for stock_id in chunk:
-                    try:
-                        # 檢查此股票代碼是否存在於下載的資料中
-                        if stock_id in df_chunk_raw.columns.get_level_values(1):
-                            # 單獨把這一檔個股切出來，並強制定名欄位名稱
-                            df_k = df_chunk_raw.xs(stock_id, axis=1, level=1).reset_index()
-                            df_k.columns = [str(c).upper() for c in df_k.columns] # 全部強制轉大寫字串！
-                            
-                            if 'DATE' in df_k.columns and not df_k['CLOSE'].dropna().empty:
-                                df_k = df_k.rename(columns={
-                                    'DATE': 'Date', 'OPEN': 'Open', 'HIGH': 'High', 
-                                    'LOW': 'Low', 'CLOSE': 'Close', 'VOLUME': 'Volume'
-                                })
-                                df_k['Stock_ID'] = stock_id
-                                all_frames.append(df_k[['Date', 'Open', 'High', 'Low', 'Close', 'Volume', 'Stock_ID']])
-                    except:
-                        continue
-            except Exception:
+            if df.empty or len(df) < 65:
                 continue
-        
-        progress_text.text("✅ K 線數據載入成功，正在執行量化模型運算...")
-        
-        if not all_frames:
-            st.error("❌ 下載失敗，請稍後再試。")
-        else:
-            df_all = pd.concat(all_frames, ignore_index=True)
-            st.session_state.raw_df_all = df_all
-            df_today_signals = calculate_indicators_and_signals(df_all)
-            df_filtered = filter_strategy(df_today_signals, tolerance=m_tolerance)
-            st.session_state.scan_results = df_filtered
+                
+            # 欄位強制定名與清洗
+            df = df.reset_index()
+            df.columns = [str(c).strip().title() for c in df.columns]
+            df = df.rename(columns={'Date': 'Date', 'Open': 'Open', 'High': 'High', 'Low': 'Low', 'Close': 'Close', 'Volume': 'Volume'})
             
-            if not df_filtered.empty:
-                st.session_state.mobile_selected_stock = str(df_filtered.iloc[0]['Stock_ID'])
-
-# ==========================================
-# 6. 獨立報表與雙軌繪圖區
-# ==========================================
-if st.session_state.scan_results is not None:
-    st.markdown("---")
-    st.success(f"🎉 數據更新成功！")
-    st.subheader(f"📋 12大核心板塊：今日 AI 多頭貼線選股清單")
+            # 計算技術指標
+            df['MA5'] = df['Close'].rolling(window=5).mean()
+            df['MA20'] = df['Close'].rolling(window=20).mean()
+            df['MA60'] = df['Close'].rolling(window=60).mean()
+            
+            # 存入全域字典
+            st.session_state.all_stock_data[ticker_id] = df
+            
+            # 提取最新一筆資料做篩選評分
+            last_day = df.iloc[-1]
+            prev_day = df.iloc[-2]
+            
+            close_p = last_day['Close']
+            ma20_p = last_day['MA20']
+            ma60_p = last_day['MA60']
+            ma5_p = last_day['MA5']
+            
+            # 核心多頭策略：20MA > 60MA (多頭排列) 且 收盤價大於 20MA
+            if ma20_p > ma60_p and close_p > ma20_p:
+                dist_5ma = (close_p - ma5_p) / ma5_p
+                
+                # 計算 AI 勝率權重
+                score = 0.5
+                if last_day['Volume'] > prev_day['Volume']: score += 0.2
+                if abs(dist_5ma) < 0.05: score += 0.2
+                
+                summary_rows.append({
+                    '股票代碼': ticker_id,
+                    '今日收盤': round(close_p, 2),
+                    '月線 (20MA)': round(ma20_p, 2),
+                    '偏離5MA 幅度': f"{round(dist_5ma * 100, 2)}%",
+                    'AI 預估波段勝率': f"{round(score * 100, 1)}%",
+                    'raw_dist': abs(dist_5ma)
+                })
+                success_count += 1
+        except Exception as e:
+            continue
+            
+    status_text.text(f"✅ 掃描完成！成功載入 {len(st.session_state.all_stock_data)} 檔核心股數據。")
     
-    if st.session_state.scan_results.empty:
-        st.warning(f"ℹ️ 當前篩選條件下無符合條件的科技股。")
+    if summary_rows:
+        df_sum = pd.DataFrame(summary_rows).sort_values(by='raw_dist')
+        st.session_state.filtered_summary = df_sum.drop(columns=['raw_dist'])
     else:
-        candidate_list = [str(x) for x in st.session_state.scan_results['Stock_ID'].tolist()]
-        
-        display_df = st.session_state.scan_results[['Stock_ID', 'Close', 'MA20', 'Dist_5MA', 'AI_Win_Rate']].copy()
-        display_df['Dist_5MA'] = (display_df['Dist_5MA'] * 100).round(2).astype(str) + "%"
-        display_df['AI_Win_Rate'] = (display_df['AI_Win_Rate'] * 100).round(1).astype(str) + "%"
-        display_df['Close'] = display_df['Close'].round(2)
-        display_df['MA20'] = display_df['MA20'].round(2)
-        display_df.columns = ['股票代碼', '今日收盤價', '月線(20MA)', '偏離5MA幅度', 'AI 預估波段勝率']
-        st.dataframe(display_df, use_container_width=True)
+        st.session_state.filtered_summary = pd.DataFrame()
 
-        # 手機快捷切換鈕
-        st.markdown("---")
-        st.subheader("📱 手機專用：點擊下方按鈕切換圖表")
+# ==========================================
+# 4. 畫面呈現與手機專用連動選單 (解決點擊格子無效的痛點)
+# ==========================================
+if st.session_state.filtered_summary is not None:
+    st.markdown("---")
+    
+    if st.session_state.filtered_summary.empty:
+        st.warning("ℹ️ 今日暫無完全符合強勢貼線的多頭核心股，建議放寬條件或觀察大盤。")
+    else:
+        st.subheader("📋 今日 AI 強勢多頭選股清單")
+        st.caption("💡 提示：下表僅供對照參考。若要查看趨勢圖，請使用下方專門為手機設計的「下拉選單」進行切換！")
+        st.dataframe(st.session_state.filtered_summary, use_container_width=True)
         
-        display_buttons = candidate_list[:15]
-        if st.session_state.mobile_selected_stock not in display_buttons and display_buttons:
-            st.session_state.mobile_selected_stock = display_buttons[0]
+        st.markdown("---")
+        st.subheader("📱 手機專用看圖區")
+        
+        # 提取清單中所有的股票代碼當作選單選項
+        available_stocks = st.session_state.filtered_summary['股票代碼'].tolist()
+        
+        # 建立手機版專用下拉式選單（這個一變動，Streamlit 保證 100% 重新渲染畫圖！）
+        selected_stock = st.selectbox(
+            "請選擇欲檢視的股票代碼：",
+            options=available_stocks,
+            index=0
+        )
+        
+        if selected_stock in st.session_state.all_stock_data:
+            st.markdown(f"### 📊 個股波段走勢圖：{selected_stock}")
             
-        cols = st.columns(3)
-        for idx, s_id in enumerate(display_buttons):
-            col_target = cols[idx % 3]
-            is_active = (s_id == st.session_state.mobile_selected_stock)
-            btn_type = "primary" if is_active else "secondary"
+            stock_df = st.session_state.all_stock_data[selected_stock]
+            # 取出最近 60 筆交易日做圖
+            plot_df = stock_df.tail(60).copy()
             
-            if col_target.button(f"📊 {s_id}", key=f"btn_{s_id}", type=btn_type, use_container_width=True):
-                st.session_state.mobile_selected_stock = s_id
-                st.rerun()
-                
-        current_view_stock = st.session_state.mobile_selected_stock
+            # 整理成 Streamlit 內建圖表要的格式 (以 Date 為 Index)
+            plot_df['Date'] = pd.to_datetime(plot_df['Date']).dt.date
+            chart_data = plot_df.set_index('Date')[['Close', 'MA5', 'MA20']]
+            chart_data.columns = ['今日收盤價', '5日均線(5MA)', '20日月線(20MA)']
             
-        if current_view_stock and st.session_state.raw_df_all is not None:
-            st.markdown(f"### 📈 正在檢視：**{current_view_stock}**")
+            # 手機原生安全流折線圖：保證有數據就絕對畫得出來，不卡頓、不隱形
+            st.line_chart(chart_data, use_container_width=True)
             
-            stock_k_data = st.session_state.raw_df_all[st.session_state.raw_df_all['Stock_ID'] == current_view_stock].sort_values('Date')
-            plot_df = stock_k_data.tail(90).copy()
-            
-            if not plot_df.empty:
-                plot_df['MA5'] = plot_df['Close'].rolling(window=5).mean()
-                plot_df['MA20'] = plot_df['Close'].rolling(window=20).mean()
-                plot_df['MA60'] = plot_df['Close'].rolling(window=60).mean()
-                
-                # 🛠️ 專業 K 線圖 (Plotly)
-                fig_k = go.Figure()
-                fig_k.add_trace(go.Candlestick(
-                    x=plot_df['Date'], open=plot_df['Open'], high=plot_df['High'], low=plot_df['Low'], close=plot_df['Close'], name='日 K 線',
-                    increasing_line_color='#FF3333', decreasing_line_color='#00AA00'
-                ))
-                fig_k.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['MA5'], name='5MA', line=dict(color='#FFDD00', width=1.5)))
-                fig_k.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['MA20'], name='20MA', line=dict(color='#FF00FF', width=2)))
-                fig_k.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['MA60'], name='60MA', line=dict(color='#00FFFF', width=1.5)))
-                
-                fig_k.update_layout(
-                    template="plotly_dark", height=420, xaxis_rangeslider_visible=False,
-                    margin=dict(l=10, r=10, t=10, b=10),
-                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-                )
-                st.plotly_chart(fig_k, use_container_width=True)
-                
-                # 🛠️ 手機原生折線圖安全流
-                st.markdown("**📉 趨勢對照折線圖 (備用防護)**")
-                chart_data = plot_df.set_index('Date')[['Close', 'MA5', 'MA20']]
-                st.line_chart(chart_data, use_container_width=True)
-            else:
-                st.error(f"⚠️ 找不到 {current_view_stock} 的 K 線資料，請點擊上方按鈕重新掃描。")
+            # 呈現數據小卡片
+            latest_data = plot_df.iloc[-1]
+            c1, c2, c3 = st.columns(3)
+            c1.metric("今日收盤", f"${round(latest_data['Close'], 2)}")
+            c2.metric("5MA 均價", f"${round(latest_data['MA5'], 2)}")
+            c3.metric("20MA 月線", f"${round(latest_data['MA20'], 2)}")
