@@ -14,19 +14,18 @@ tw_tz = pytz.timezone('Asia/Taipei')
 today_tw = datetime.now(tw_tz).date()
 
 st.title("🏛️ 12大科技與機電核心股：AI 選股系統")
-st.caption(f"目前時間：{datetime.now(tw_tz).strftime('%Y-%m-%d %H:%M:%S')} | 終極防封鎖個體戶版")
+st.caption(f"目前時間：{datetime.now(tw_tz).strftime('%Y-%m-%d %H:%M:%S')} | 官方大量安全下載版")
 
-# 記憶池防線
-if 'db_all_stocks' not in st.session_state:
-    st.session_state.db_all_stocks = {}  # 儲存每檔成功的 DataFrame
-if 'final_report' not in st.session_state:
-    st.session_state.final_report = None
+# 核心記憶池
+if 'all_data_dict' not in st.session_state:
+    st.session_state.all_data_dict = {}  # 儲存乾淨的個股 DataFrame
+if 'filtered_report' not in st.session_state:
+    st.session_state.filtered_report = None
 
 # ==========================================
-# 2. 精選台股最活躍、絕對有資料的科技核心股
+# 2. 精選台股最具流動性、絕對有 K 線的核心科技股
 # ==========================================
-def get_hardcoded_pool():
-    # 嚴選 30 檔最具代表性權值股，避免冷門股拖垮 API
+def get_verified_pool():
     core = [
         2330, 2317, 2454, 2308, 2382, 2303, 3711, 2357, 3231, 2408,
         1503, 1513, 1519, 1605, 1608, 1795, 2409, 3481, 3008, 2345,
@@ -39,112 +38,117 @@ def get_hardcoded_pool():
     return pool
 
 # ==========================================
-# 3. 控制核心：逐檔下載（防暴神盾）
+# 3. 控制核心：使用官方高效率異步大批量下載法
 # ==========================================
 if st.button("🏛️ 啟動 12 大科技板塊即時盤後掃描", type="primary", use_container_width=True):
-    targets = get_hardcoded_pool()
-    st.session_state.db_all_stocks = {} # 清空舊庫
-    st.session_state.final_report = None
+    targets = get_verified_pool()
+    st.session_state.all_data_dict = {} # 清空舊庫
+    st.session_state.filtered_report = None
     
-    p_bar = st.progress(0)
-    msg_box = st.empty()
+    start_dt = (today_tw - timedelta(days=120)).strftime("%Y-%m-%d")
+    end_dt = (today_tw + timedelta(days=1)).strftime("%Y-%m-%d")
     
-    rows = []
-    success_num = 0
-    
-    # 🎯 核心改良：一檔一檔單獨抓，分開擊破 Yahoo 封鎖
-    for i, stock_code in enumerate(targets):
-        msg_box.text(f"📥 正在安全下載個股 ({i+1}/{len(targets)}): {stock_code} ...")
-        p_bar.progress((i + 1) / len(targets))
-        
+    with st.spinner("🚀 正在使用官方高速通道載入 12 大板塊核心股資料..."):
         try:
-            # 使用 period="6m" 最穩定，拋棄日期邊界計算
-            ticker = yf.Ticker(stock_code)
-            df_single = ticker.history(period="6m", interval="1d")
+            # 🎯 核心改良：一次性批量下載，並透過 group_by='ticker' 保持結構清晰，避免被 Yahoo 封鎖
+            df_raw = yf.download(
+                tickers=targets, start=start_dt, end=end_dt,
+                auto_adjust=True, group_by='ticker', progress=False
+            )
             
-            if df_single.empty or len(df_single) < 40:
-                continue
-            
-            # 拍平並大寫欄位名稱
-            df_single = df_single.reset_index()
-            df_single.columns = [str(c).strip().upper() for c in df_single.columns]
-            
-            # 標準化欄位名稱
-            df_single = df_single.rename(columns={
-                'DATE': 'Date', 'OPEN': 'Open', 'HIGH': 'High', 
-                'LOW': 'Low', 'CLOSE': 'Close', 'VOLUME': 'Volume'
-            })
-            
-            # 計算核心技術指標
-            df_single['MA5'] = df_single['Close'].rolling(5).mean()
-            df_single['MA20'] = df_single['Close'].rolling(20).mean()
-            df_single['MA60'] = df_single['Close'].rolling(60).mean()
-            
-            # 塞入記憶庫
-            st.session_state.db_all_stocks[stock_code] = df_single
-            success_num += 1
-            
-            # 多頭判定邏輯
-            last = df_single.iloc[-1]
-            prev = df_single.iloc[-2]
-            
-            if last['MA20'] > last['MA60'] and last['Close'] > last['MA20']:
-                dist = (last['Close'] - last['MA5']) / last['MA5']
+            if df_raw.empty:
+                st.error("❌ Yahoo Finance 伺服器拒絕連線，請稍後幾分鐘再按一次。")
+            else:
+                rows = []
+                success_count = 0
                 
-                # 計算 AI 評分
-                score = 60
-                if last['Volume'] > prev['Volume']: score += 15
-                if abs(dist) < 0.05: score += 15
+                # 遍歷所有代碼，將 MultiIndex 拆解為乾淨的格式
+                for s_id in targets:
+                    try:
+                        # 檢查該股票是否存在於下載結果的頂層索引中
+                        if s_id in df_raw.columns.levels[0]:
+                            df_stock = df_raw[s_id].dropna(subset=['Close']).reset_index()
+                            
+                            if len(df_stock) < 40:
+                                continue
+                                
+                            # 欄位名稱強制大寫標準化，避免大小寫陷阱
+                            df_stock.columns = [str(c).strip().title() for c in df_stock.columns]
+                            df_stock = df_stock.rename(columns={
+                                'Date': 'Date', 'Open': 'Open', 'High': 'High',
+                                'Low': 'Low', 'Close': 'Close', 'Volume': 'Volume'
+                            })
+                            
+                            # 計算技術指標
+                            df_stock['MA5'] = df_stock['Close'].rolling(5).mean()
+                            df_stock['MA20'] = df_stock['Close'].rolling(20).mean()
+                            df_stock['MA60'] = df_stock['Close'].rolling(60).mean()
+                            
+                            # 存入系統記憶池
+                            st.session_state.all_data_dict[s_id] = df_stock
+                            success_count += 1
+                            
+                            # 策略判斷
+                            last = df_stock.iloc[-1]
+                            prev = df_stock.iloc[-2]
+                            
+                            if last['MA20'] > last['MA60'] and last['Close'] > last['MA20']:
+                                dist = (last['Close'] - last['MA5']) / last['MA5']
+                                
+                                score = 60
+                                if last['Volume'] > prev['Volume']: score += 15
+                                if abs(dist) < 0.05: score += 15
+                                
+                                rows.append({
+                                    '股票代碼': s_id,
+                                    '今日收盤': round(last['Close'], 2),
+                                    '月線(20MA)': round(last['MA20'], 2),
+                                    '偏離5MA 幅度': f"{round(dist * 100, 2)}%",
+                                    'AI 預估波段勝率': f"{score}%",
+                                    'sort_key': abs(dist)
+                                })
+                    except:
+                        continue
+                        
+                st.success(f"🎉 掃描完成！成功解析出 {success_count} 檔核心個股數據！")
                 
-                rows.append({
-                    '股票代碼': stock_code,
-                    '今日收盤': round(last['Close'], 2),
-                    '月線(20MA)': round(last['MA20'], 2),
-                    '偏離5MA 幅度': f"{round(dist * 100, 2)}%",
-                    'AI 預估波段勝率': f"{score}%",
-                    'sort_key': abs(dist)
-                })
-        except:
-            # 某一檔壞掉，直接跳過，不牽連整張表
-            continue
-            
-    msg_box.success(f"🎉 掃描圓滿完成！成功繞過封鎖並載入 {success_num} 檔核心個股資料！")
-    
-    if rows:
-        st.session_state.final_report = pd.DataFrame(rows).sort_values('sort_key').drop(columns=['sort_key'])
-    else:
-        st.session_state.final_report = pd.DataFrame()
+                if rows:
+                    st.session_state.filtered_report = pd.DataFrame(rows).sort_values('sort_key').drop(columns=['sort_key'])
+                else:
+                    st.session_state.filtered_report = pd.DataFrame() # 空表格防呆
+        except Exception as e:
+            st.error(f"❌ 發生未知錯誤: {str(e)}")
 
 # ==========================================
-# 4. 渲染呈現與手機連動下拉選單
+# 4. 畫面呈現與手機連動下拉選單
 # ==========================================
-if st.session_state.final_report is not None:
+if st.session_state.filtered_report is not None:
     st.markdown("---")
     
-    if st.session_state.final_report.empty:
-        st.warning("ℹ️ 當前市場股票暫未完美符合多頭貼線條件，下方仍提供個股走勢查詢。")
-        # 即使沒有篩選出的個股，也允許查詢所有成功下載的股票
-        active_list = list(st.session_state.db_all_stocks.keys())
+    # 決定下拉選單可選的股票清單
+    if st.session_state.filtered_report.empty:
+        st.warning("ℹ️ 今日盤後無完全符合強勢貼線的多頭核心股。下方已自動為您加載可用個股進行查詢。")
+        active_list = list(st.session_state.all_data_dict.keys())
     else:
         st.subheader("📋 今日 AI 強勢多頭貼線選股清單")
-        st.dataframe(st.session_state.final_report, use_container_width=True)
-        active_list = st.session_state.final_report['股票代碼'].tolist()
+        st.dataframe(st.session_state.filtered_report, use_container_width=True)
+        active_list = st.session_state.filtered_report['股票代碼'].tolist()
         
+    # 如果有成功下載到任何一檔資料，就強制顯示手機專用看圖選單
     if active_list:
         st.markdown("---")
         st.subheader("📱 手機專用：下拉選單看 K 線走勢")
         
-        # 🛠️ 核心救星：用這個下拉選單取代點擊表格格子！100% 觸發網頁更新
         user_pick = st.selectbox(
             "請「點擊這裡」選擇你想看圖的股票代碼：",
             options=active_list,
             index=0
         )
         
-        if user_pick in st.session_state.db_all_stocks:
+        if user_pick in st.session_state.all_data_dict:
             st.markdown(f"### 📈 正在繪製：**{user_pick}** 趨勢圖")
             
-            target_df = st.session_state.db_all_stocks[user_pick]
+            target_df = st.session_state.all_data_dict[user_pick]
             plot_df = target_df.tail(60).copy()
             
             # 轉換成 Streamlit 內建圖表格式
@@ -155,9 +159,11 @@ if st.session_state.final_report is not None:
             # 🚀 拋棄不穩定的 Plotly，改用 100% 支援手機版網頁的原生 line_chart
             st.line_chart(chart_data, use_container_width=True)
             
-            # 數據儀表板
+            # 數據指標小卡片
             curr_data = plot_df.iloc[-1]
             m1, m2, m3 = st.columns(3)
             m1.metric("今日最新收盤", f"${round(curr_data['Close'], 2)}")
             m2.metric("5MA 均價", f"${round(curr_data['MA5'], 2)}")
             m3.metric("20MA 月線", f"${round(curr_data['MA20'], 2)}")
+    else:
+        st.error("⚠️ 目前緩存區無任何股票數據，請確認網路正常後重新點擊上方紅色按鈕掃描。")
