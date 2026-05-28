@@ -27,7 +27,7 @@ if 'equity_curve' not in st.session_state:
 if 'perf_metrics' not in st.session_state:
     st.session_state.perf_metrics = None
 if 'raw_df_all' not in st.session_state:
-    st.session_state.raw_df_all = None  # 新增：儲存完整的歷史K線，供繪製個股日K使用
+    st.session_state.raw_df_all = None  
 
 # ==========================================
 # 2. 核心功能：精準科技與機電代碼池
@@ -38,7 +38,7 @@ def get_all_tw_stocks():
         list(range(1503, 1627)) +  
         list(range(1701, 1796)) +  
         list(range(2301, 2498)) +  
-        list(range(3001, 3715)) +  # 含信錦 1582
+        list(range(3001, 3715)) +  
         list(range(4904, 4977)) +  
         list(range(5203, 5498)) +  
         list(range(6104, 6285)) +  
@@ -223,8 +223,6 @@ if st.button("🏛️ 啟動 12 大科技類別全自動盤後掃描與回測", 
                 df_all = df_all.rename(columns={'index': 'Date'})
                 
             df_signals = calculate_indicators_and_signals(df_all)
-            
-            # 將計算好完整均線指標的完整大表存進 Session State 供後續畫圖呼叫
             st.session_state.raw_df_all = df_signals 
             
             df_filtered = filter_strategy(df_signals, tolerance=m_tolerance)
@@ -240,55 +238,61 @@ if st.button("🏛️ 啟動 12 大科技類別全自動盤後掃描與回測", 
 # ==========================================
 st.markdown("---")
 
-# 顯示選股表格
 if st.session_state.scan_results is not None:
     st.subheader(f"📋 核心科技股：今日 AI 強勢多頭貼線選股清單")
+    st.caption("💡 提示：你可以**直接用滑鼠點擊下方表格的任一橫列（會整行亮起來）**，下方的日 K 技術線圖就會立刻同步切換！")
     
     if st.session_state.scan_results.empty:
-        st.warning(f"ℹ️ 當前市場（{today_tw}）無符合「月線向上且貼近 5MA」之科技股。")
+        st.warning(f"ℹ️ 當前市場無符合之科技股。")
     else:
+        # 建立乾淨漂亮的顯示表
         display_df = st.session_state.scan_results[['Stock_ID', 'Close', 'MA20', 'Dist_5MA', 'AI_Win_Rate']].copy()
         display_df['Dist_5MA'] = (display_df['Dist_5MA'] * 100).round(2).astype(str) + "%"
         display_df['AI_Win_Rate'] = (display_df['AI_Win_Rate'] * 100).round(1).astype(str) + "%"
         display_df['Close'] = display_df['Close'].round(2)
         display_df['MA20'] = display_df['MA20'].round(2)
-        
         display_df.columns = ['股票代碼', '今日收盤價', '月線(20MA)', '偏離5MA幅度', 'AI 預估波段勝率']
-        st.dataframe(display_df, use_container_width=True)
-
+        
+        # 【核心修正】：開啟 on_select 功能，允許滑桿點擊，並強制單選模式 (single)
+        event = st.dataframe(
+            display_df, 
+            use_container_width=True,
+            on_select="rerun",
+            selection_mode="single"
+        )
+        
         # ==========================================
-        # 🔥 新增功能：點擊看日 K 線互動區
+        # 🔥 點擊表格連動日 K 線繪製區
         # ==========================================
-        st.markdown("---")
-        st.subheader("🔍 互動式個股日 K 線圖監控區")
+        selected_stock = None
         
-        # 從今日選股名單中提取出股票代號清單
-        candidate_list = st.session_state.scan_results['Stock_ID'].tolist()
-        
-        # 下拉選單：讓使用者選擇想看哪一檔股票的日 K
-        selected_stock = st.selectbox("👉 請選擇上方清單中的股票代碼，系統將自動繪製對應之日 K 線與均線系統：", candidate_list)
-        
-        if selected_stock and st.session_state.raw_df_all is not None:
-            # 撈出該檔股票的歷史資料
-            stock_k_data = st.session_state.raw_df_all[st.session_state.raw_df_all['Stock_ID'] == selected_stock].sort_values('Date')
+        # 優先權 1：檢查使用者有沒有在表格上點擊某一行
+        if event and 'rows' in event.get('selection', {}) and len(event['selection']['rows']) > 0:
+            selected_row_idx = event['selection']['rows'][0]
+            selected_stock = display_df.iloc[selected_row_idx]['股票代碼']
+        else:
+            # 優先權 2：沒點選時，預設顯示名單中的第一檔股票，避免畫面空白
+            selected_stock = display_df.iloc[0]['股票代碼']
             
-            # 取最近 120 天的 K 線，畫面最漂亮、最容易看清趨勢
+        if selected_stock and st.session_state.raw_df_all is not None:
+            st.markdown(f"### 📊 當前檢視：{selected_stock}")
+            
+            stock_k_data = st.session_state.raw_df_all[st.session_state.raw_df_all['Stock_ID'] == selected_stock].sort_values('Date')
             plot_df = stock_k_data.tail(120)
             
-            # 使用 Plotly 建立專業 K 線圖
             fig_k = go.Figure()
             
-            # 1. 畫蠟燭 K 線
+            # 蠟燭 K 線 (紅漲綠跌)
             fig_k.add_trace(go.Candlestick(
                 x=plot_df['Date'],
                 open=plot_df['Open'], high=plot_df['High'],
                 low=plot_df['Low'], close=plot_df['Close'],
                 name='日 K 線',
-                increasing_line_color='#FF3333',  # 台股習慣：上漲為紅
-                decreasing_line_color='#00AA00'   # 台股習慣：下跌為綠
+                increasing_line_color='#FF3333',  
+                decreasing_line_color='#00AA00'   
             ))
             
-            # 2. 疊加三條均線系統
+            # 均線系統
             fig_k.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['MA5'], name='5MA (週線)', line=dict(color='#FFDD00', width=1.5)))
             fig_k.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['MA20'], name='20MA (月線)', line=dict(color='#FF00FF', width=2)))
             fig_k.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['MA60'], name='60MA (季線)', line=dict(color='#00FFFF', width=1.5)))
@@ -297,7 +301,7 @@ if st.session_state.scan_results is not None:
                 title=f"📈 {selected_stock} 歷史日 K 技術線圖 (近 120 交易日)",
                 xaxis_title="日期", yaxis_title="股價 (TWD)",
                 template="plotly_dark", height=500,
-                xaxis_rangeslider_visible=False,  # 隱藏下方冗餘的滑桿
+                xaxis_rangeslider_visible=False,  
                 margin=dict(l=20, r=20, t=50, b=20)
             )
             st.plotly_chart(fig_k, use_container_width=True)
