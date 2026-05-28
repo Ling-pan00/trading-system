@@ -36,7 +36,6 @@ if 'mobile_selected_stock' not in st.session_state:
 # ==========================================
 def get_all_tw_stocks():
     """精準生成12大板塊的代碼範圍，並透過規則過濾掉90%的空號，確保總量在700-800檔實體股內"""
-    # 定義使用者指定的12大科技與機電產業的核心代碼區間
     tech_ranges = [
         (1503, 1627),  # 電機機械、電器電纜
         (1701, 1796),  # 化學工業
@@ -67,13 +66,11 @@ def get_all_tw_stocks():
         filtered_codes.append(code)
         
     stock_pool = []
-    # 根據台股編碼慣例，高流動性核心區段配置對應後綴，避免 1 檔股票發送 2 次請求
     for code in filtered_codes:
         s_code = str(code)
         if code < 3000 or (3700 <= code < 4900):
-            stock_pool.append(f"{s_code}.TW")  # 主力集中在上市
+            stock_pool.append(f"{s_code}.TW")  
         else:
-            # 中小型板塊同時佈局上市與上櫃探針
             stock_pool.append(f"{s_code}.TW")
             stock_pool.append(f"{s_code}.TWO")
             
@@ -216,12 +213,12 @@ if st.button("🏛️ 啟動 12 大科技類別全自動盤後掃描與回測", 
     st.session_state.raw_df_all = None
     st.session_state.mobile_selected_stock = None
     
-    with St.spinner("🚀 正在大範圍初始化 12 大板塊科技股池..."):
+    # 這裡修正為小寫的 st.spinner 囉！
+    with st.spinner("🚀 正在大範圍初始化 12 大板塊科技股池..."):
         raw_stock_pool = get_all_tw_stocks()
         start_dt = (today_tw - timedelta(days=int(backtest_years * 365))).strftime("%Y-%m-%d")
         end_dt = today_tw.strftime("%Y-%m-%d")
         
-        # 安全分流機制：調整為每 40 檔一組，拉長下載間隔，防禦封鎖
         batch_size = 40
         all_frames = []
         
