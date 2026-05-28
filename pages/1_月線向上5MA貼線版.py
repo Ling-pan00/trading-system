@@ -19,7 +19,7 @@ st.caption(f"目前台北時間：{datetime.now(tw_tz).strftime('%Y-%m-%d %H:%M:
 
 st.info("🎯 **當前監控產業**：電機機械、電器電纜、化學工業、半導體業、電腦週邊、光電業、通信網路、電子組件、電子通路、資訊服務、其他電子、數位雲端。")
 
-# 🔥 核心記憶池初始化：確保任何重新整理、點擊按鈕，資料都穩如泰山
+# 核心記憶池初始化
 if 'scan_results' not in st.session_state:
     st.session_state.scan_results = None
 if 'raw_df_all' not in st.session_state:
@@ -40,7 +40,7 @@ def get_all_tw_stocks():
         1704, 1710, 1711, 1712, 1713, 1714, 1717, 1718, 1721, 1722, 1723, 1725, 1727, 1730, 1732, 1735, 1742, 1750, 
         1773, 1776, 1783, 1786, 1789, 1795, 
         # 半導體核心群
-        2302, 2303, 2329, 2330, 2337, 2338, 2344, 2351, 2363, 2369, 2379, 2388, 2408, 2434, 2436, 2441, 2449, 2454, 
+        2302, 2303, 2329, 2330, 2337, 2338, 2344, 2351, 2363, 2369, 2379, 2388, 2408, 2434, 2441, 2449, 2454, 
         2458, 2481, 3006, 3016, 3034, 3035, 3041, 3054, 3189, 3228, 3231, 3260, 3264, 3289, 3374, 3413, 3438, 3529, 
         3532, 3545, 3557, 3567, 3583, 3588, 3592, 3653, 3661, 3680, 3686, 3707, 4919, 4952, 4961, 4967, 4968, 5269, 
         5274, 5347, 5471, 5483, 6138, 6147, 6182, 6223, 6239, 6243, 6257, 6271, 6411, 6415, 6435, 6451, 6462, 6477, 
@@ -115,7 +115,7 @@ def filter_strategy(df_today, tolerance=0.08):
     return filtered.sort_values('AI_Win_Rate', ascending=False)
 
 # ==========================================
-# 5. Streamlit 控制與下載邏輯 (點擊後只管把資料塞進記憶池)
+# 5. 控制與下載邏輯
 # ==========================================
 st.sidebar.header("⚙️ 篩選設定")
 m_tolerance = st.sidebar.slider("5MA 貼近容忍度 (±%)", 1, 15, 8) / 100
@@ -148,7 +148,12 @@ if st.button("🏛️ 啟動 12 大科技板塊即時盤後掃描", type="primar
                 if isinstance(df_chunk_raw.columns, pd.MultiIndex):
                     for stock_id in chunk:
                         if stock_id in df_chunk_raw.columns.levels[0]:
-                            df_k = df_chunk_raw[stock_id].dropna(subset=['Close', 'Volume']).reset_index()
+                            df_k = df_chunk_raw[stock_id].reset_index()
+                            
+                            # 🔥 🔥 🔥 關鍵防錯：強制將所有欄位名稱轉為首字母大寫，防止 yfinance 小寫 Bug
+                            df_k.columns = [c.capitalize() for c in df_k.columns]
+                            
+                            df_k = df_k.dropna(subset=['Close', 'Volume'])
                             if len(df_k) >= 60:
                                 df_k['Stock_ID'] = stock_id
                                 all_frames.append(df_k)
@@ -161,10 +166,9 @@ if st.button("🏛️ 啟動 12 大科技板塊即時盤後掃描", type="primar
             st.error("❌ 下載失敗，請稍後再試。")
         else:
             df_all = pd.concat(all_frames, ignore_index=True)
-            if 'Date' not in df_all.columns and 'index' in df_all.columns:
-                df_all = df_all.rename(columns={'index': 'Date'})
+            if 'Date' not in df_all.columns and 'Index' in df_all.columns:
+                df_all = df_all.rename(columns={'Index': 'Date'})
                 
-            # 灌入全域池
             st.session_state.raw_df_all = df_all
             df_today_signals = calculate_indicators_and_signals(df_all)
             df_filtered = filter_strategy(df_today_signals, tolerance=m_tolerance)
@@ -174,19 +178,18 @@ if st.button("🏛️ 啟動 12 大科技板塊即時盤後掃描", type="primar
                 st.session_state.mobile_selected_stock = str(df_filtered.iloc[0]['Stock_ID'])
 
 # ==========================================
-# 6. 獨立渲染區 (只要記憶池有資料，不管怎麼點按鈕，它都必定畫圖)
+# 6. 獨立報表與雙軌繪圖區
 # ==========================================
 if st.session_state.scan_results is not None:
     st.markdown("---")
+    st.success(f"🎉 數據加載完成！已準備就緒。")
     st.subheader(f"📋 12大核心板塊：今日 AI 多頭貼線選股清單")
     
     if st.session_state.scan_results.empty:
         st.warning(f"ℹ️ 當前篩選條件下無符合條件的科技股。")
     else:
-        # 1. 建立乾淨的代碼對照表
         candidate_list = [str(x) for x in st.session_state.scan_results['Stock_ID'].tolist()]
         
-        # 2. 呈現數據表格
         display_df = st.session_state.scan_results[['Stock_ID', 'Close', 'MA20', 'Dist_5MA', 'AI_Win_Rate']].copy()
         display_df['Dist_5MA'] = (display_df['Dist_5MA'] * 100).round(2).astype(str) + "%"
         display_df['AI_Win_Rate'] = (display_df['AI_Win_Rate'] * 100).round(1).astype(str) + "%"
@@ -195,13 +198,11 @@ if st.session_state.scan_results is not None:
         display_df.columns = ['股票代碼', '今日收盤價', '月線(20MA)', '偏離5MA幅度', 'AI 預估波段勝率']
         st.dataframe(display_df, use_container_width=True)
 
-        # 3. 手機專用按鈕區
+        # 手機快捷切換鈕
         st.markdown("---")
-        st.subheader("📱 手機專用：點擊下方按鈕看日 K 線圖")
+        st.subheader("📱 手機專用：點擊下方按鈕切換圖表")
         
         display_buttons = candidate_list[:15]
-        
-        # 確保預設一定有選中一檔
         if st.session_state.mobile_selected_stock not in display_buttons and display_buttons:
             st.session_state.mobile_selected_stock = display_buttons[0]
             
@@ -211,40 +212,45 @@ if st.session_state.scan_results is not None:
             is_active = (s_id == st.session_state.mobile_selected_stock)
             btn_type = "primary" if is_active else "secondary"
             
-            # 🔥 關鍵改良：點擊按鈕時，直接修改 State，並立刻 rerun 讓下方圖表重畫
             if col_target.button(f"📊 {s_id}", key=f"btn_{s_id}", type=btn_type, use_container_width=True):
                 st.session_state.mobile_selected_stock = s_id
                 st.rerun()
                 
-        # 4. 繪製 K 線圖區
         current_view_stock = st.session_state.mobile_selected_stock
             
         if current_view_stock and st.session_state.raw_df_all is not None:
-            st.markdown(f"### 📈 正在檢視日 K 線：**{current_view_stock}**")
+            st.markdown(f"### 📈 正在檢視：**{current_view_stock}**")
             
             stock_k_data = st.session_state.raw_df_all[st.session_state.raw_df_all['Stock_ID'] == current_view_stock].sort_values('Date')
-            plot_df = stock_k_data.tail(90)
+            plot_df = stock_k_data.tail(90).copy()
             
             if not plot_df.empty:
-                fig_k = go.Figure()
-                fig_k.add_trace(go.Candlestick(
-                    x=plot_df['Date'], open=plot_df['Open'], high=plot_df['High'], low=plot_df['Low'], close=plot_df['Close'], name='日 K 線',
-                    increasing_line_color='#FF3333', decreasing_line_color='#00AA00'
-                ))
-                
-                # 在畫圖時動態補上均線，不影響記憶體
-                plot_df = plot_df.copy()
+                # 重新動態計算均線，確保繪圖完整
                 plot_df['MA5'] = plot_df['Close'].rolling(window=5).mean()
                 plot_df['MA20'] = plot_df['Close'].rolling(window=20).mean()
                 plot_df['MA60'] = plot_df['Close'].rolling(window=60).mean()
                 
-                fig_k.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['MA5'], name='5MA', line=dict(color='#FFDD00', width=1.5)))
-                fig_k.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['MA20'], name='20MA', line=dict(color='#FF00FF', width=2)))
-                fig_k.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['MA60'], name='60MA', line=dict(color='#00FFFF', width=1.5)))
+                # 🛠️ 軌道一：標準專業專業日 K 線圖 (Plotly 渲染)
+                try:
+                    fig_k = go.Figure()
+                    fig_k.add_trace(go.Candlestick(
+                        x=plot_df['Date'], open=plot_df['Open'], high=plot_df['High'], low=plot_df['Low'], close=plot_df['Close'], name='日 K 線',
+                        increasing_line_color='#FF3333', decreasing_line_color='#00AA00'
+                    ))
+                    fig_k.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['MA5'], name='5MA', line=dict(color='#FFDD00', width=1.5)))
+                    fig_k.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['MA20'], name='20MA', line=dict(color='#FF00FF', width=2)))
+                    fig_k.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['MA60'], name='60MA', line=dict(color='#00FFFF', width=1.5)))
+                    
+                    fig_k.update_layout(
+                        template="plotly_dark", height=420, xaxis_rangeslider_visible=False,
+                        margin=dict(l=10, r=10, t=10, b=10),
+                        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+                    )
+                    st.plotly_chart(fig_k, use_container_width=True)
+                except Exception as e:
+                    st.caption("🔄 已自動切換至手機相容渲染模式")
                 
-                fig_k.update_layout(
-                    template="plotly_dark", height=450, xaxis_rangeslider_visible=False,
-                    margin=dict(l=10, r=10, t=20, b=10),
-                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-                )
-                st.plotly_chart(fig_k, use_container_width=True)
+                # 🛠️ 軌道二：手機原生極速折線圖雙保險 (防 Plotly 被手機瀏覽器阻擋)
+                st.markdown("**📉 收盤價與均線趨勢對照 (手機原生安全流)**")
+                chart_data = plot_df.set_index('Date')[['Close', 'MA5', 'MA20']]
+                st.line_chart(chart_data, use_container_width=True)
