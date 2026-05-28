@@ -28,6 +28,8 @@ if 'perf_metrics' not in st.session_state:
     st.session_state.perf_metrics = None
 if 'raw_df_all' not in st.session_state:
     st.session_state.raw_df_all = None  
+if 'mobile_selected_stock' not in st.session_state:
+    st.session_state.mobile_selected_stock = None  # 用來記錄手機點擊了哪檔股票
 
 # ==========================================
 # 2. 核心功能：精準科技與機電代碼池
@@ -228,6 +230,10 @@ if st.button("🏛️ 啟動 12 大科技類別全自動盤後掃描與回測", 
             df_filtered = filter_strategy(df_signals, tolerance=m_tolerance)
             st.session_state.scan_results = df_filtered
             
+            # 預設手機檢視第一檔
+            if not df_filtered.empty:
+                st.session_state.mobile_selected_stock = df_filtered.iloc[0]['Stock_ID']
+            
             metrics, df_equity = run_backtest(df_signals, init_cap, max_hold, h_days)
             st.session_state.perf_metrics = metrics
             st.session_state.equity_curve = df_equity
@@ -244,7 +250,6 @@ if st.session_state.scan_results is not None:
     if st.session_state.scan_results.empty:
         st.warning(f"ℹ️ 當前市場無符合之科技股。")
     else:
-        # 顯示乾淨漂亮的靜態資料表（避免版本衝突）
         display_df = st.session_state.scan_results[['Stock_ID', 'Close', 'MA20', 'Dist_5MA', 'AI_Win_Rate']].copy()
         display_df['Dist_5MA'] = (display_df['Dist_5MA'] * 100).round(2).astype(str) + "%"
         display_df['AI_Win_Rate'] = (display_df['AI_Win_Rate'] * 100).round(1).astype(str) + "%"
@@ -252,34 +257,41 @@ if st.session_state.scan_results is not None:
         display_df['MA20'] = display_df['MA20'].round(2)
         display_df.columns = ['股票代碼', '今日收盤價', '月線(20MA)', '偏離5MA幅度', 'AI 預估波段勝率']
         
-        # 渲染最穩定的靜態表格
         st.dataframe(display_df, use_container_width=True)
 
         # ==========================================
-        # 🔥 修正區：改用全版本通殺的下拉選單進行日 K 連動
+        # 🔥 專為手機優化：手機快打按鈕連動區
         # ==========================================
         st.markdown("---")
-        st.subheader("🔍 互動式個股日 K 線圖監控區")
+        st.subheader("📱 手機專用：點擊下方按鈕看日 K 線圖")
+        st.caption("👇 用手指直接點擊下方任一個股票代號，日 K 線圖就會在下方立刻切換！")
         
-        # 提取股票代號清單
         candidate_list = st.session_state.scan_results['Stock_ID'].tolist()
         
-        # 透過強大的 st.selectbox 來切換日 K，永不報錯且直覺
-        selected_stock = st.selectbox(
-            "👉 請選擇你想檢視技術線圖的股票代碼：", 
-            options=candidate_list,
-            index=0  # 預設選取第一檔
-        )
+        # 做出橫向排版的手機按鈕，每 3 個一橫列
+        cols = st.columns(3)
+        for idx, s_id in enumerate(candidate_list):
+            col_target = cols[idx % 3]
+            # 如果目前這檔是被選中的，按鈕用彩色亮色區分（在 st 裡面用 type='primary'）
+            is_active = (s_id == st.session_state.mobile_selected_stock)
+            btn_type = "primary" if is_active else "secondary"
             
-        if selected_stock and st.session_state.raw_df_all is not None:
-            st.markdown(f"### 📊 當前檢視：{selected_stock}")
+            if col_target.button(f"📊 {s_id}", key=f"btn_{s_id}", type=btn_type, use_container_width=True):
+                st.session_state.mobile_selected_stock = s_id
+                st.rerun() # 立即重刷頁面更新圖表
+                
+        # 繪製 K 線圖
+        current_view_stock = st.session_state.mobile_selected_stock if st.session_state.mobile_selected_stock else candidate_list[0]
             
-            stock_k_data = st.session_state.raw_df_all[st.session_state.raw_df_all['Stock_ID'] == selected_stock].sort_values('Date')
-            plot_df = stock_k_data.tail(120)
+        if current_view_stock and st.session_state.raw_df_all is not None:
+            st.markdown(f"### 📈 正在檢視日 K 線：**{current_view_stock}**")
+            
+            stock_k_data = st.session_state.raw_df_all[st.session_state.raw_df_all['Stock_ID'] == current_view_stock].sort_values('Date')
+            plot_df = stock_k_data.tail(90) # 手機畫面小，看 90 天最清晰
             
             fig_k = go.Figure()
             
-            # 蠟燭 K 線 (紅漲綠跌)
+            # 蠟燭 K 線
             fig_k.add_trace(go.Candlestick(
                 x=plot_df['Date'],
                 open=plot_df['Open'], high=plot_df['High'],
@@ -290,16 +302,16 @@ if st.session_state.scan_results is not None:
             ))
             
             # 均線系統
-            fig_k.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['MA5'], name='5MA (週線)', line=dict(color='#FFDD00', width=1.5)))
-            fig_k.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['MA20'], name='20MA (月線)', line=dict(color='#FF00FF', width=2)))
-            fig_k.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['MA60'], name='60MA (季線)', line=dict(color='#00FFFF', width=1.5)))
+            fig_k.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['MA5'], name='5MA', line=dict(color='#FFDD00', width=1.5)))
+            fig_k.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['MA20'], name='20MA', line=dict(color='#FF00FF', width=2)))
+            fig_k.add_trace(go.Scatter(x=plot_df['Date'], y=plot_df['MA60'], name='60MA', line=dict(color='#00FFFF', width=1.5)))
             
             fig_k.update_layout(
-                title=f"📈 {selected_stock} 歷史日 K 技術線圖 (近 120 交易日)",
-                xaxis_title="日期", yaxis_title="股價 (TWD)",
-                template="plotly_dark", height=500,
+                template="plotly_dark", 
+                height=450, # 配合手機高度優化
                 xaxis_rangeslider_visible=False,  
-                margin=dict(l=20, r=20, t=50, b=20)
+                margin=dict(l=10, r=10, t=20, b=10),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1) # 圖例橫放省空間
             )
             st.plotly_chart(fig_k, use_container_width=True)
 
@@ -309,19 +321,18 @@ if st.session_state.perf_metrics is not None and st.session_state.equity_curve i
     st.subheader("📊 科技群組交易策略歷史回測績效報告")
     
     m = st.session_state.perf_metrics
-    c1, c2, c3, c4 = st.columns(4)
+    c1, c2 = st.columns(2) # 手機版切成兩欄比較好讀
     c1.metric("📈 年化報酬率", f"{m['年化報酬率 (%)']}%")
     c2.metric("🛡️ 夏普比率 (Sharpe)", f"{m['夏普比率 (Sharpe)']}")
-    c3.metric("📉 最大回撤 (MDD)", f"{m['最大回撤 (MDD %)']}%")
-    c4.metric("💰 歷史總報酬率", f"{m['總報酬率 (%)']}%")
+    c1.metric("📉 最大回撤 (MDD)", f"{m['最大回撤 (MDD %)']}%")
+    c2.metric("💰 歷史總報酬率", f"{m['總報酬率 (%)']}%")
     
     df_eq = st.session_state.equity_curve
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=df_eq['Date'], y=df_eq['Total_Wealth'], name='帳戶總資產值', line=dict(color='#00FFCC', width=2)))
     fig.update_layout(
-        title="🤖 核心科技股策略歷史帳戶淨值走勢 (Equity Curve)",
-        xaxis_title="時間軸", yaxis_title="資產總值",
-        template="plotly_dark", height=400,
-        margin=dict(l=20, r=20, t=40, b=20)
+        title="🤖 歷史帳戶淨值走勢",
+        template="plotly_dark", height=350,
+        margin=dict(l=10, r=10, t=40, b=10)
     )
     st.plotly_chart(fig, use_container_width=True)
