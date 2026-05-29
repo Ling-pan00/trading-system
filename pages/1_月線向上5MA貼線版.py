@@ -4,61 +4,119 @@ import yfinance as yf
 from datetime import datetime, timedelta
 import pytz
 from streamlit_echarts import st_echarts
+import requests
 
 # ==========================================
 # 1. 系統初始化與手機網頁配置
 # ==========================================
-st.set_page_config(page_title="12大科技核心股選股系統", layout="wide")
+st.set_page_config(page_title="台股 11 大產業核心選股系統", layout="wide")
 
 tw_tz = pytz.timezone('Asia/Taipei')
 today_tw = datetime.now(tw_tz).date()
 
-st.title("🏛️ 12大科技與機電核心股：AI 選股系統")
-st.caption(f"目前時間：{datetime.now(tw_tz).strftime('%Y-%m-%d %H:%M:%S')} | 📱 手機無痛相容・正宗紅綠 K 線版")
+st.title("🏛️ 台股 11 大產業大數據：AI 選股系統")
+st.caption(f"目前時間：{datetime.now(tw_tz).strftime('%Y-%m-%d %H:%M:%S')} | 📱 全產業自動同步・正宗紅綠 K 線版")
 
-# 記憶池：維持快取，避免手機點擊選單時重算
+# 記憶池
 if 'all_stock_cache' not in st.session_state:
     st.session_state.all_stock_cache = {}  
 if 'final_report_df' not in st.session_state:
     st.session_state.final_report_df = None
 
-# 精選 30 檔最活躍的台股核心科技與重電代表股
-def get_verified_pool():
-    core = [
-        2330, 2317, 2454, 2308, 2382, 2303, 3711, 2357, 3231, 2408,
-        1503, 1504, 1513, 1514, 1519, 1605, 1608, 1795, 2409, 3481,
-        3008, 2345, 2356, 2376, 2377, 2324, 4938, 2353, 3037, 3034
-    ]
+# ==========================================
+# 2. 自動動態抓取確定的 11 大產業上市櫃全名單
+# ==========================================
+@st.cache_data(ttl=86400) # 每天自動更新一次名單
+def get_industry_stock_pool():
+    """自動從證交所/櫃買中心開放資料抓取指定 11 個產業的股票代碼"""
+    # 嚴格鎖定您指定的 11 大產業（排除電子商務）
+    target_industries = {
+        "電機機械", "化學工業", "半導體業", "電腦及週邊設備業", "電腦週邊", 
+        "光電業", "通信網路業", "通信網路", "電子零組件業", "電子組件", 
+        "電子通路業", "電子通路", "資訊服務業", "資訊服務", "其他電子業", 
+        "其他電子", "數位雲端"
+    }
+    
     pool = []
-    for c in core:
-        suffix = ".TW" if c < 3000 else ".TWO"
-        pool.append(f"{c}{suffix}")
-    return pool
+    
+    # 1. 抓取上市股票總表
+    try:
+        twse_url = "https://openapi.twse.com.tw/v1/opendata/t187ap03_L"
+        res = requests.get(twse_url, timeout=10)
+        if res.status_code == 200:
+            data = res.json()
+            for item in data:
+                ind = item.get('產業別', '').strip()
+                code = item.get('公司代號', '').strip()
+                # 篩選產業別並排除權證、存託憑證(代碼大於4碼或含英文字)
+                if any(t in ind for t in target_industries) and len(code) == 4 and code.isdigit():
+                    pool.append(f"{code}.TW")
+    except Exception as e:
+        st.warning(f"⚠️ 上市股票名單同步異常，改用備份機制: {str(e)}")
+
+    # 2. 抓取上櫃股票總表
+    try:
+        tpex_url = "https://www.tpex.org.tw/openapi/v1/t187ap03_O"
+        res = requests.get(tpex_url, timeout=10)
+        if res.status_code == 200:
+            data = res.json()
+            for item in data:
+                ind = item.get('產業別', '').strip()
+                code = item.get('公司代號', '').strip()
+                if any(t in ind for t in target_industries) and len(code) == 4 and code.isdigit():
+                    pool.append(f"{code}.TWO")
+    except Exception as e:
+        st.warning(f"⚠️ 上櫃股票名單同步異常，改用備份機制: {str(e)}")
+        
+    # 萬一 API 斷線的極端防禦機制
+    if not pool:
+        pool = ["2330.TW", "2317.TW", "2454.TW", "1513.TW", "2382.TW"]
+        
+    return sorted(list(set(pool)))
 
 # ==========================================
-# 2. 核心大批量大數據下載通道
+# 3. 核心大批量大數據下載通道
 # ==========================================
-if st.button("🏛️ 啟動 12 大科技板塊即時盤後掃描", type="primary", use_container_width=True):
-    targets = get_verified_pool()
+# 獲取最新動態總池
+total_pool = get_industry_stock_pool()
+
+st.write(f"📊 **目前監控守備範圍**：精選 11 大指定產業，共計 **{len(total_pool)}** 檔個股。")
+
+if st.button(f"🏛️ 啟動 {len(total_pool)} 檔全產業即時盤後掃描", type="primary", use_container_width=True):
     st.session_state.all_stock_cache = {} 
     st.session_state.final_report_df = None
     
     start_dt = (today_tw - timedelta(days=120)).strftime("%Y-%m-%d")
     end_dt = (today_tw + timedelta(days=1)).strftime("%Y-%m-%d")
     
-    with st.spinner("🚀 正在批量同步 Yahoo 盤後 K 線數據..."):
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    
+    with st.spinner("🚀 正在進行跨產業大批量 K 線數據同步與 AI 策略計算..."):
         try:
-            df_raw = yf.download(tickers=targets, start=start_dt, end=end_dt, auto_adjust=True, group_by='ticker', progress=False)
+            # 批量下載所有股票歷史數據
+            df_raw = yf.download(tickers=total_pool, start=start_dt, end=end_dt, auto_adjust=True, group_by='ticker', progress=False)
             
             if df_raw.empty:
-                st.error("❌ Yahoo 伺服器拒絕連線，請稍後重試。")
+                st.error("❌ Yahoo 伺服器拒絕連線或未回傳數據，請稍後重試。")
             else:
                 rows = []
                 success_count = 0
                 
-                for s_id in targets:
-                    if s_id in df_raw.columns.levels[0]:
-                        df_stock = df_raw[s_id].dropna(subset=['Close']).reset_index()
+                # 處理多資產 MultiIndex 結構
+                has_multi_index = isinstance(df_raw.columns, pd.MultiIndex)
+                
+                for idx, s_id in enumerate(total_pool):
+                    # 更新進度條
+                    progress_bar.progress((idx + 1) / len(total_pool))
+                    
+                    try:
+                        if has_multi_index:
+                            if s_id not in df_raw.columns.levels[0]: continue
+                            df_stock = df_raw[s_id].dropna(subset=['Close']).reset_index()
+                        else:
+                            df_stock = df_raw.dropna(subset=['Close']).reset_index()
+                            
                         if len(df_stock) < 40: continue
                             
                         df_stock.columns = [str(c).strip().title() for c in df_stock.columns]
@@ -68,6 +126,7 @@ if st.button("🏛️ 啟動 12 大科技板塊即時盤後掃描", type="primar
                         df_stock['MA5'] = df_stock['Close'].rolling(5).mean()
                         df_stock['MA20'] = df_stock['Close'].rolling(20).mean()
                         
+                        # 快取歷史 K 線數據
                         st.session_state.all_stock_cache[s_id] = df_stock
                         success_count += 1
                         
@@ -76,35 +135,39 @@ if st.button("🏛️ 啟動 12 大科技板塊即時盤後掃描", type="primar
                         
                         # 多頭排列核心策略：收盤大於月線
                         if last['Close'] > last['MA20']:
-                            dist = (last['Close'] - last['MA5']) / last['MA5']
-                            score = 60
-                            if last['Volume'] > prev['Volume']: score += 20
-                            if abs(dist) < 0.05: score += 20
+                            dist = (last['Close'] - last['MA5']) / last['MA5'] # 實際乖離率
                             
-                            rows.append({
-                                '股票代碼': s_id, 
-                                '今日收盤': round(last['Close'], 2), 
-                                '月線(20MA)': round(last['MA20'], 2),
-                                '偏離5MA 幅度': f"{round(dist * 100, 2)}%", 
-                                'AI 預估波段勝率': f"{score}%", 
-                                'sort_key': abs(dist)
-                            })
+                            # 🎯 【精準回檔區間：股價距離 5 日線 -2% 到 +3% 之間】
+                            if -0.02 <= dist <= 0.03:
+                                score = 60
+                                if last['Volume'] > prev['Volume']: score += 20
+                                score += 20  # 符合黃金貼線區間，直接加分
+                                
+                                rows.append({
+                                    '股票代碼': s_id, 
+                                    '今日收盤': round(last['Close'], 2), 
+                                    '月線(20MA)': round(last['MA20'], 2),
+                                    '偏離5MA 幅度': f"{round(dist * 100, 2)}%", 
+                                    'AI 預估波段勝率': f"{score}%", 
+                                    'sort_key': abs(dist)
+                                })
+                    except:
+                        continue # 容錯機制：單一股票錯誤不中斷整體大盤掃描
                             
                 if rows:
                     st.session_state.final_report_df = pd.DataFrame(rows).sort_values('sort_key').drop(columns=['sort_key'])
                 else:
                     st.session_state.final_report_df = pd.DataFrame()
                     
-                st.success(f"🎉 掃描完成！成功解析出 {success_count} 檔核心股數據！")
+                status_text.success(f"🎉 11大產業掃描完成！成功解析出 {success_count} 檔有效股票！")
         except Exception as e:
             st.error(f"❌ 發生系統錯誤: {str(e)}")
 
 # ==========================================
-# 3. 🎯 畫面呈現：【選項與真正紅綠 K 線完全置頂】
+# 4. 🎯 畫面呈現：【選項與真正紅綠 K 線完全置頂】
 # ==========================================
 if st.session_state.final_report_df is not None:
     
-    # 決定下拉選單要有哪些股票
     if st.session_state.final_report_df.empty:
         active_list = list(st.session_state.all_stock_cache.keys())
     else:
@@ -113,9 +176,8 @@ if st.session_state.final_report_df is not None:
     if active_list:
         st.markdown("---")
         st.subheader("📱 手機看圖優先區 (請直接使用下方選單切換個股)")
-        st.info("💡 溫馨提示：請不要點擊最底下的表格。手指直接點擊下方這個「下拉選單」就能換股票看真正的 K 線圖！")
+        st.info("💡 溫馨提示：手指直接點擊下方這個「下拉選單」就能隨時換股票看 K 線圖！")
         
-        # 👑 唯一的連動核心機關
         user_pick = st.selectbox(
             "👉 請點擊這裡切換股票代碼：", 
             options=active_list, 
@@ -125,18 +187,13 @@ if st.session_state.final_report_df is not None:
         if user_pick in st.session_state.all_stock_cache:
             st.markdown(f"### 📊 **{user_pick}** 正宗紅綠 K 線圖 (含 5MA/20MA)")
             
-            # 取最近 50 天的 K 線，大小在手機直式螢幕上最精美、好讀
             df_target = st.session_state.all_stock_cache[user_pick].tail(50).copy()
-            
-            # 轉換為 ECharts 專用的格式
             dates_list = pd.to_datetime(df_target['Date']).dt.strftime('%m/%d').tolist()
             
-            # K線基礎數據格式為: [開盤價, 收盤價, 最低價, 最高價]
             k_values = df_target[['Open', 'Close', 'Low', 'High']].values.tolist()
             ma5_list = [round(v, 2) if not pd.isna(v) else None for v in df_target['MA5'].tolist()]
             ma20_list = [round(v, 2) if not pd.isna(v) else None for v in df_target['MA20'].tolist()]
             
-            # 🛠️ 終極黑科技：利用 ECharts 純前端 Canvas 渲染，在手機內建網頁裡永不隱形
             echarts_options = {
                 "backgroundColor": "#121212", 
                 "legend": {
@@ -194,7 +251,6 @@ if st.session_state.final_report_df is not None:
             
             st_echarts(options=echarts_options, height="400px")
             
-            # 數據看板區
             curr_data = df_target.iloc[-1]
             m1, m2, m3 = st.columns(3)
             m1.metric("今日收盤價", f"${round(curr_data['Close'], 2)}")
@@ -205,6 +261,6 @@ if st.session_state.final_report_df is not None:
     st.markdown("---")
     st.subheader("📋 今日 AI 多頭貼線選股對照清單 (僅供參考)")
     if st.session_state.final_report_df.empty:
-        st.warning("ℹ️ 今日盤後無完全符合強勢貼線的多頭核心股。")
+        st.warning("ℹ️ 今日盤後無完全符合強勢貼線(-2% ~ +3%)的多頭核心股。")
     else:
         st.dataframe(st.session_state.final_report_df, use_container_width=True)
