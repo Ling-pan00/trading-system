@@ -24,13 +24,12 @@ if 'final_report_df' not in st.session_state:
     st.session_state.final_report_df = None
 
 # ==========================================
-# 2. 自動動態抓取確定的 11 大產業上市櫃全名單
+# 2. 【終極修正】自動動態抓取 11 大產業上市櫃全名單
 # ==========================================
 @st.cache_data(ttl=86400) # 每天自動更新一次名單
 def get_industry_stock_pool():
-    """自動從證交所/櫃買中心開放資料抓取指定 11 個產業的股票代碼"""
-    # 嚴格鎖定您指定的 11 大產業（排除電子商務）
-    target_industries = {
+    """使用高穩定度台股總表來源，精確過濾 11 大產業的股票代碼"""
+    target_industries = [
         "電機機械", "化學工業", "半導體業", "電腦及週邊設備業", "電腦週邊", 
         "光電業", "通信網路業", "通信網路", "電子零組件業", "電子組件", 
         "電子通路業", "電子通路", "資訊服務業", "資訊服務", "其他電子業", 
@@ -39,45 +38,76 @@ def get_industry_stock_pool():
     
     pool = []
     
-    # 1. 抓取上市股票總表
+    # 方案 A：使用絕對穩定的證期局/公開資訊統計標準網頁格式解碼
     try:
-        twse_url = "https://openapi.twse.com.tw/v1/opendata/t187ap03_L"
-        res = requests.get(twse_url, timeout=10)
-        if res.status_code == 200:
-            data = res.json()
-            for item in data:
-                ind = item.get('產業別', '').strip()
-                code = item.get('公司代號', '').strip()
-                # 篩選產業別並排除權證、存託憑證(代碼大於4碼或含英文字)
-                if any(t in ind for t in target_industries) and len(code) == 4 and code.isdigit():
+        # 上市股票總表
+        url_l = "https://isin.twse.com.tw/isin/C_public.jsp?strMode=2"
+        res_l = requests.get(url_l, timeout=15)
+        res_l.encoding = 'big5'
+        dfs_l = pd.read_html(res_l.text)
+        df_l = dfs_l[0]
+        df_l.columns = df_l.iloc[0]
+        df_l = df_l.iloc[1:]
+        
+        for _, row in df_l.iterrows():
+            name_code = str(row.get('有價證券代號及名稱', ''))
+            ind = str(row.get('產業別', '')).strip()
+            if any(t in ind for t in target_industries):
+                code = name_code.split('\u3000')[0].strip()
+                if len(code) == 4 and code.isdigit():
                     pool.append(f"{code}.TW")
     except Exception as e:
-        st.warning(f"⚠️ 上市股票名單同步異常，改用備份機制: {str(e)}")
+        st.warning(f"⚠️ 上市名單方案 A 異常，嘗試方案 B")
 
-    # 2. 抓取上櫃股票總表
     try:
-        tpex_url = "https://www.tpex.org.tw/openapi/v1/t187ap03_O"
-        res = requests.get(tpex_url, timeout=10)
-        if res.status_code == 200:
-            data = res.json()
-            for item in data:
-                ind = item.get('產業別', '').strip()
-                code = item.get('公司代號', '').strip()
-                if any(t in ind for t in target_industries) and len(code) == 4 and code.isdigit():
+        # 上櫃股票總表
+        url_o = "https://isin.twse.com.tw/isin/C_public.jsp?strMode=4"
+        res_o = requests.get(url_o, timeout=15)
+        res_o.encoding = 'big5'
+        dfs_o = pd.read_html(res_o.text)
+        df_o = dfs_o[0]
+        df_o.columns = df_o.iloc[0]
+        df_o = df_o.iloc[1:]
+        
+        for _, row in df_o.iterrows():
+            name_code = str(row.get('有價證券代號及名稱', ''))
+            ind = str(row.get('產業別', '')).strip()
+            if any(t in ind for t in target_industries):
+                code = name_code.split('\u3000')[0].strip()
+                if len(code) == 4 and code.isdigit():
                     pool.append(f"{code}.TWO")
     except Exception as e:
-        st.warning(f"⚠️ 上櫃股票名單同步異常，改用備份機制: {str(e)}")
-        
-    # 萬一 API 斷線的極端防禦機制
+        st.warning(f"⚠️ 上櫃名單方案 A 異常，嘗試方案 B")
+
+    # 方案 B：如果 A 失敗了，用 OpenAPI 當作備援機制
     if not pool:
-        pool = ["2330.TW", "2317.TW", "2454.TW", "1513.TW", "2382.TW"]
-        
+        try:
+            res = requests.get("https://openapi.twse.com.tw/v1/opendata/t187ap03_L", timeout=10)
+            if res.status_code == 200:
+                for item in res.json():
+                    ind = item.get('產業別', '').strip()
+                    code = item.get('公司代號', '').strip()
+                    if any(t in ind for t in target_industries) and len(code) == 4 and code.isdigit():
+                        pool.append(f"{code}.TW")
+        except:
+            pass
+
+    # 終極防線：如果剛好遇到斷網，載入最活躍的 30 檔科技核心股，確保系統永不癱瘓
+    if not pool:
+        backup_core = [
+            2330, 2317, 2454, 2308, 2382, 2303, 3711, 2357, 3231, 2408,
+            1503, 1504, 1513, 1514, 1519, 1605, 1608, 1795, 2409, 3481,
+            3008, 2345, 2356, 2376, 2377, 2324, 4938, 2353, 3037, 3034
+        ]
+        for c in backup_core:
+            suffix = ".TW" if c < 3000 else ".TWO"
+            pool.append(f"{c}{suffix}")
+            
     return sorted(list(set(pool)))
 
 # ==========================================
 # 3. 核心大批量大數據下載通道
 # ==========================================
-# 獲取最新動態總池
 total_pool = get_industry_stock_pool()
 
 st.write(f"📊 **目前監控守備範圍**：精選 11 大指定產業，共計 **{len(total_pool)}** 檔個股。")
@@ -102,12 +132,9 @@ if st.button(f"🏛️ 啟動 {len(total_pool)} 檔全產業即時盤後掃描",
             else:
                 rows = []
                 success_count = 0
-                
-                # 處理多資產 MultiIndex 結構
                 has_multi_index = isinstance(df_raw.columns, pd.MultiIndex)
                 
                 for idx, s_id in enumerate(total_pool):
-                    # 更新進度條
                     progress_bar.progress((idx + 1) / len(total_pool))
                     
                     try:
@@ -122,26 +149,23 @@ if st.button(f"🏛️ 啟動 {len(total_pool)} 檔全產業即時盤後掃描",
                         df_stock.columns = [str(c).strip().title() for c in df_stock.columns]
                         df_stock = df_stock.rename(columns={'Date': 'Date', 'Open': 'Open', 'High': 'High', 'Low': 'Low', 'Close': 'Close', 'Volume': 'Volume'})
                         
-                        # 計算均線技術指標
                         df_stock['MA5'] = df_stock['Close'].rolling(5).mean()
                         df_stock['MA20'] = df_stock['Close'].rolling(20).mean()
                         
-                        # 快取歷史 K 線數據
                         st.session_state.all_stock_cache[s_id] = df_stock
                         success_count += 1
                         
                         last = df_stock.iloc[-1]
                         prev = df_stock.iloc[-2]
                         
-                        # 多頭排列核心策略：收盤大於月線
                         if last['Close'] > last['MA20']:
-                            dist = (last['Close'] - last['MA5']) / last['MA5'] # 實際乖離率
+                            dist = (last['Close'] - last['MA5']) / last['MA5']
                             
                             # 🎯 【精準回檔區間：股價距離 5 日線 -2% 到 +3% 之間】
                             if -0.02 <= dist <= 0.03:
                                 score = 60
                                 if last['Volume'] > prev['Volume']: score += 20
-                                score += 20  # 符合黃金貼線區間，直接加分
+                                score += 20
                                 
                                 rows.append({
                                     '股票代碼': s_id, 
@@ -152,7 +176,7 @@ if st.button(f"🏛️ 啟動 {len(total_pool)} 檔全產業即時盤後掃描",
                                     'sort_key': abs(dist)
                                 })
                     except:
-                        continue # 容錯機制：單一股票錯誤不中斷整體大盤掃描
+                        continue
                             
                 if rows:
                     st.session_state.final_report_df = pd.DataFrame(rows).sort_values('sort_key').drop(columns=['sort_key'])
