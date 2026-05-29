@@ -24,85 +24,51 @@ if 'final_report_df' not in st.session_state:
     st.session_state.final_report_df = None
 
 # ==========================================
-# 2. 自動動態抓取 11 大產業上市櫃全名單
+# 2. 【高穩定 OpenAPI 機制】自動抓取 11 大產業上市櫃全名單
 # ==========================================
-@st.cache_data(ttl=86400) # 每天自動更新一次名單
 def get_industry_stock_pool():
-    """使用高穩定度台股總表來源，精確過濾 11 大產業的股票代碼"""
-    target_industries = [
+    """直接從證交所/櫃買官方 OpenAPI 串流抓取指定 11 個產業的股票代碼 (無快取殘留)"""
+    target_industries = {
         "電機機械", "化學工業", "半導體業", "電腦及週邊設備業", "電腦週邊", 
         "光電業", "通信網路業", "通信網路", "電子零組件業", "電子組件", 
         "電子通路業", "電子通路", "資訊服務業", "資訊服務", "其他電子業", 
         "其他電子", "數位雲端"
-    ]
+    }
     
     pool = []
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    }
     
-    # 方案 A：使用證交所直接產出的 HTML 公開證券分類表解碼
+    # 1. 抓取上市股票總表 (透過 OpenAPI)
     try:
-        # 上市股票總表
-        url_l = "https://isin.twse.com.tw/isin/C_public.jsp?strMode=2"
-        res_l = requests.get(url_l, timeout=15)
-        res_l.encoding = 'big5'
-        dfs_l = pd.read_html(res_l.text)
-        df_l = dfs_l[0]
-        df_l.columns = df_l.iloc[0]
-        df_l = df_l.iloc[1:]
-        
-        for _, row in df_l.iterrows():
-            name_code = str(row.get('有價證券代號及名稱', ''))
-            ind = str(row.get('產業別', '')).strip()
-            if any(t in ind for t in target_industries):
-                code = name_code.split('\u3000')[0].strip()
-                if len(code) == 4 and code.isdigit():
+        twse_url = "https://openapi.twse.com.tw/v1/opendata/t187ap03_L"
+        res = requests.get(twse_url, headers=headers, timeout=15)
+        if res.status_code == 200:
+            data = res.json()
+            for item in data:
+                ind = item.get('產業別', '').strip()
+                code = item.get('公司代號', '').strip()
+                # 篩選產業別並排除權證、存託憑證(代碼大於4碼或含英文字)
+                if any(t in ind for t in target_industries) and len(code) == 4 and code.isdigit():
                     pool.append(f"{code}.TW")
     except Exception as e:
-        pass
+        st.error(f"⚠️ 上市 OpenAPI 連線失敗: {str(e)}")
 
+    # 2. 抓取上櫃股票總表 (透過櫃買 OpenAPI)
     try:
-        # 上櫃股票總表
-        url_o = "https://isin.twse.com.tw/isin/C_public.jsp?strMode=4"
-        res_o = requests.get(url_o, timeout=15)
-        res_o.encoding = 'big5'
-        dfs_o = pd.read_html(res_o.text)
-        df_o = dfs_o[0]
-        df_o.columns = df_o.iloc[0]
-        df_o = df_o.iloc[1:]
-        
-        for _, row in df_o.iterrows():
-            name_code = str(row.get('有價證券代號及名稱', ''))
-            ind = str(row.get('產業別', '')).strip()
-            if any(t in ind for t in target_industries):
-                code = name_code.split('\u3000')[0].strip()
-                if len(code) == 4 and code.isdigit():
+        tpex_url = "https://www.tpex.org.tw/openapi/v1/t187ap03_O"
+        res = requests.get(tpex_url, headers=headers, timeout=15)
+        if res.status_code == 200:
+            data = res.json()
+            for item in data:
+                ind = item.get('產業別', '').strip()
+                code = item.get('公司代號', '').strip()
+                if any(t in ind for t in target_industries) and len(code) == 4 and code.isdigit():
                     pool.append(f"{code}.TWO")
     except Exception as e:
-        pass
-
-    # 方案 B：備援機制 (萬一 A 失敗，使用 OpenAPI)
-    if not pool:
-        try:
-            res = requests.get("https://openapi.twse.com.tw/v1/opendata/t187ap03_L", timeout=10)
-            if res.status_code == 200:
-                for item in res.json():
-                    ind = item.get('產業別', '').strip()
-                    code = item.get('公司代號', '').strip()
-                    if any(t in ind for t in target_industries) and len(code) == 4 and code.isdigit():
-                        pool.append(f"{code}.TW")
-        except:
-            pass
-
-    # 終極防線：若完全斷網，載入預設 30 檔指標股，確保系統能正常啟動
-    if not pool:
-        backup_core = [
-            2330, 2317, 2454, 2308, 2382, 2303, 3711, 2357, 3231, 2408,
-            1503, 1504, 1513, 1514, 1519, 1605, 1608, 1795, 2409, 3481,
-            3008, 2345, 2356, 2376, 2377, 2324, 4938, 2353, 3037, 3034
-        ]
-        for c in backup_core:
-            suffix = ".TW" if c < 3000 else ".TWO"
-            pool.append(f"{c}{suffix}")
-            
+        st.error(f"⚠️ 上櫃 OpenAPI 連線失敗: {str(e)}")
+        
     return sorted(list(set(pool)))
 
 # ==========================================
@@ -110,81 +76,85 @@ def get_industry_stock_pool():
 # ==========================================
 total_pool = get_industry_stock_pool()
 
-st.write(f"📊 **目前監控守備範圍**：精選 11 大指定產業，共計 **{len(total_pool)}** 檔個股。")
+if not total_pool:
+    st.error("❌ 無法從官方伺服器取得任何股票名單，請確認網路或稍後重試。")
+else:
+    st.write(f"📊 **目前監控守備範圍**：精選 11 大指定產業，共計 **{len(total_pool)}** 檔個股。")
 
-if st.button(f"🏛️ 啟動 {len(total_pool)} 檔全產業即時盤後掃描", type="primary", use_container_width=True):
-    st.session_state.all_stock_cache = {} 
-    st.session_state.final_report_df = None
-    
-    start_dt = (today_tw - timedelta(days=120)).strftime("%Y-%m-%d")
-    end_dt = (today_tw + timedelta(days=1)).strftime("%Y-%m-%d")
-    
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-    
-    with st.spinner("🚀 正在進行跨產業大批量 K 線數據同步與 AI 策略計算..."):
-        try:
-            df_raw = yf.download(tickers=total_pool, start=start_dt, end=end_dt, auto_adjust=True, group_by='ticker', progress=False)
-            
-            if df_raw.empty:
-                st.error("❌ Yahoo 伺服器拒絕連線或未回傳數據，請稍後重試。")
-            else:
-                rows = []
-                success_count = 0
-                has_multi_index = isinstance(df_raw.columns, pd.MultiIndex)
+    if st.button(f"🏛️ 啟動 {len(total_pool)} 檔全產業即時盤後掃描", type="primary", use_container_width=True):
+        st.session_state.all_stock_cache = {} 
+        st.session_state.final_report_df = None
+        
+        start_dt = (today_tw - timedelta(days=120)).strftime("%Y-%m-%d")
+        end_dt = (today_tw + timedelta(days=1)).strftime("%Y-%m-%d")
+        
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        with st.spinner("🚀 正在進行跨產業大批量 K 線數據同步與 AI 策略計算..."):
+            try:
+                # 採用 Yahoo 大批量分組下載
+                df_raw = yf.download(tickers=total_pool, start=start_dt, end=end_dt, auto_adjust=True, group_by='ticker', progress=False)
                 
-                for idx, s_id in enumerate(total_pool):
-                    progress_bar.progress((idx + 1) / len(total_pool))
-                    
-                    try:
-                        if has_multi_index:
-                            if s_id not in df_raw.columns.levels[0]: continue
-                            df_stock = df_raw[s_id].dropna(subset=['Close']).reset_index()
-                        else:
-                            df_stock = df_raw.dropna(subset=['Close']).reset_index()
-                            
-                        if len(df_stock) < 40: continue
-                            
-                        df_stock.columns = [str(c).strip().title() for c in df_stock.columns]
-                        df_stock = df_stock.rename(columns={'Date': 'Date', 'Open': 'Open', 'High': 'High', 'Low': 'Low', 'Close': 'Close', 'Volume': 'Volume'})
-                        
-                        df_stock['MA5'] = df_stock['Close'].rolling(5).mean()
-                        df_stock['MA20'] = df_stock['Close'].rolling(20).mean()
-                        
-                        st.session_state.all_stock_cache[s_id] = df_stock
-                        success_count += 1
-                        
-                        last = df_stock.iloc[-1]
-                        prev = df_stock.iloc[-2]
-                        
-                        if last['Close'] > last['MA20']:
-                            dist = (last['Close'] - last['MA5']) / last['MA5']
-                            
-                            # 🎯 【精準回檔區間：股價距離 5 日線 -2% 到 +3% 之間】
-                            if -0.02 <= dist <= 0.03:
-                                score = 60
-                                if last['Volume'] > prev['Volume']: score += 20
-                                score += 20
-                                
-                                rows.append({
-                                    '股票代碼': s_id, 
-                                    '今日收盤': round(last['Close'], 2), 
-                                    '月線(20MA)': round(last['MA20'], 2),
-                                    '偏離5MA 幅度': f"{round(dist * 100, 2)}%", 
-                                    'AI 預估波段勝率': f"{score}%", 
-                                    'sort_key': abs(dist)
-                                })
-                    except:
-                        continue
-                            
-                if rows:
-                    st.session_state.final_report_df = pd.DataFrame(rows).sort_values('sort_key').drop(columns=['sort_key'])
+                if df_raw.empty:
+                    st.error("❌ Yahoo 伺服器拒絕連線或未回傳數據，請稍後重試。")
                 else:
-                    st.session_state.final_report_df = pd.DataFrame()
+                    rows = []
+                    success_count = 0
+                    has_multi_index = isinstance(df_raw.columns, pd.MultiIndex)
                     
-                status_text.success(f"🎉 11大產業掃描完成！成功解析出 {success_count} 檔有效股票！")
-        except Exception as e:
-            st.error(f"❌ 發生系統錯誤: {str(e)}")
+                    for idx, s_id in enumerate(total_pool):
+                        progress_bar.progress((idx + 1) / len(total_pool))
+                        
+                        try:
+                            if has_multi_index:
+                                if s_id not in df_raw.columns.levels[0]: continue
+                                df_stock = df_raw[s_id].dropna(subset=['Close']).reset_index()
+                            else:
+                                df_stock = df_raw.dropna(subset=['Close']).reset_index()
+                                
+                            if len(df_stock) < 40: continue
+                                
+                            df_stock.columns = [str(c).strip().title() for c in df_stock.columns]
+                            df_stock = df_stock.rename(columns={'Date': 'Date', 'Open': 'Open', 'High': 'High', 'Low': 'Low', 'Close': 'Close', 'Volume': 'Volume'})
+                            
+                            df_stock['MA5'] = df_stock['Close'].rolling(5).mean()
+                            df_stock['MA20'] = df_stock['Close'].rolling(20).mean()
+                            
+                            st.session_state.all_stock_cache[s_id] = df_stock
+                            success_count += 1
+                            
+                            last = df_stock.iloc[-1]
+                            prev = df_stock.iloc[-2]
+                            
+                            if last['Close'] > last['MA20']:
+                                dist = (last['Close'] - last['MA5']) / last['MA5']
+                                
+                                # 🎯 【精準回檔區間：股價距離 5 日線 -2% 到 +3% 之間】
+                                if -0.02 <= dist <= 0.03:
+                                    score = 60
+                                    if last['Volume'] > prev['Volume']: score += 20
+                                    score += 20
+                                    
+                                    rows.append({
+                                        '股票代碼': s_id, 
+                                        '今日收盤': round(last['Close'], 2), 
+                                        '月線(20MA)': round(last['MA20'], 2),
+                                        '偏離5MA 幅度': f"{round(dist * 100, 2)}%", 
+                                        'AI 預估波段勝率': f"{score}%", 
+                                        'sort_key': abs(dist)
+                                    })
+                        except:
+                            continue
+                                
+                    if rows:
+                        st.session_state.final_report_df = pd.DataFrame(rows).sort_values('sort_key').drop(columns=['sort_key'])
+                    else:
+                        st.session_state.final_report_df = pd.DataFrame()
+                        
+                    status_text.success(f"🎉 11大產業掃描完成！成功解析出 {success_count} 檔有效股票！")
+            except Exception as e:
+                st.error(f"❌ 發生系統錯誤: {str(e)}")
 
 # ==========================================
 # 4. 🎯 畫面呈現：【選項與真正紅綠 K 線完全置頂】
