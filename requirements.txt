@@ -4,3 +4,4 @@ yfinance
 twstock
 pytz
 plotly
+streamlit-echarts
