@@ -24,7 +24,7 @@ if 'final_report_df' not in st.session_state:
     st.session_state.final_report_df = None
 
 # ==========================================
-# 2. 【終極修正】自動動態抓取 11 大產業上市櫃全名單
+# 2. 自動動態抓取 11 大產業上市櫃全名單
 # ==========================================
 @st.cache_data(ttl=86400) # 每天自動更新一次名單
 def get_industry_stock_pool():
@@ -34,11 +34,11 @@ def get_industry_stock_pool():
         "光電業", "通信網路業", "通信網路", "電子零組件業", "電子組件", 
         "電子通路業", "電子通路", "資訊服務業", "資訊服務", "其他電子業", 
         "其他電子", "數位雲端"
-    }
+    ]
     
     pool = []
     
-    # 方案 A：使用絕對穩定的證期局/公開資訊統計標準網頁格式解碼
+    # 方案 A：使用證交所直接產出的 HTML 公開證券分類表解碼
     try:
         # 上市股票總表
         url_l = "https://isin.twse.com.tw/isin/C_public.jsp?strMode=2"
@@ -57,7 +57,7 @@ def get_industry_stock_pool():
                 if len(code) == 4 and code.isdigit():
                     pool.append(f"{code}.TW")
     except Exception as e:
-        st.warning(f"⚠️ 上市名單方案 A 異常，嘗試方案 B")
+        pass
 
     try:
         # 上櫃股票總表
@@ -77,9 +77,9 @@ def get_industry_stock_pool():
                 if len(code) == 4 and code.isdigit():
                     pool.append(f"{code}.TWO")
     except Exception as e:
-        st.warning(f"⚠️ 上櫃名單方案 A 異常，嘗試方案 B")
+        pass
 
-    # 方案 B：如果 A 失敗了，用 OpenAPI 當作備援機制
+    # 方案 B：備援機制 (萬一 A 失敗，使用 OpenAPI)
     if not pool:
         try:
             res = requests.get("https://openapi.twse.com.tw/v1/opendata/t187ap03_L", timeout=10)
@@ -92,7 +92,7 @@ def get_industry_stock_pool():
         except:
             pass
 
-    # 終極防線：如果剛好遇到斷網，載入最活躍的 30 檔科技核心股，確保系統永不癱瘓
+    # 終極防線：若完全斷網，載入預設 30 檔指標股，確保系統能正常啟動
     if not pool:
         backup_core = [
             2330, 2317, 2454, 2308, 2382, 2303, 3711, 2357, 3231, 2408,
@@ -124,7 +124,6 @@ if st.button(f"🏛️ 啟動 {len(total_pool)} 檔全產業即時盤後掃描",
     
     with st.spinner("🚀 正在進行跨產業大批量 K 線數據同步與 AI 策略計算..."):
         try:
-            # 批量下載所有股票歷史數據
             df_raw = yf.download(tickers=total_pool, start=start_dt, end=end_dt, auto_adjust=True, group_by='ticker', progress=False)
             
             if df_raw.empty:
