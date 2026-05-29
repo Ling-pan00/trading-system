@@ -208,6 +208,6 @@ if st.session_state.final_report_df is not None:
     st.markdown("---")
     st.subheader("📋 今日 AI 多頭貼線選股對照清單 (僅供參考)")
     if st.session_state.final_report_df.empty:
-        st.warning("ℹ️ 今日盤後無完全符合強勢貼線的多頭核心股。")
+        st.warning("ℹ   今日盤後無完全符合強勢貼線的多頭核心股。")
     else:
         st.dataframe(st.session_state.final_report_df, use_container_width=True)
