@@ -19,7 +19,7 @@ st.caption(f"目前台北時間：{datetime.now(tw_tz).strftime('%Y-%m-%d %H:%M:
 
 st.info("🎯 **當前監控產業**：電機機械、電器電纜、化學工業、半導體業、電腦週邊、光電業、通信網路、電子組件、電子通路、資訊服務、其他電子、數位雲端。")
 
-# 核心記憶池初始化 (確保重新整理時資料不流失)
+# 🔥 核心記憶池初始化：確保任何重新整理、點擊按鈕，資料都穩如泰山
 if 'scan_results' not in st.session_state:
     st.session_state.scan_results = None
 if 'raw_df_all' not in st.session_state:
@@ -115,7 +115,7 @@ def filter_strategy(df_today, tolerance=0.08):
     return filtered.sort_values('AI_Win_Rate', ascending=False)
 
 # ==========================================
-# 5. Streamlit 控制介面
+# 5. Streamlit 控制與下載邏輯 (點擊後只管把資料塞進記憶池)
 # ==========================================
 st.sidebar.header("⚙️ 篩選設定")
 m_tolerance = st.sidebar.slider("5MA 貼近容忍度 (±%)", 1, 15, 8) / 100
@@ -164,7 +164,7 @@ if st.button("🏛️ 啟動 12 大科技板塊即時盤後掃描", type="primar
             if 'Date' not in df_all.columns and 'index' in df_all.columns:
                 df_all = df_all.rename(columns={'index': 'Date'})
                 
-            # 🔥 關鍵修復：直接將資料寫入全域 Session State 記憶池
+            # 灌入全域池
             st.session_state.raw_df_all = df_all
             df_today_signals = calculate_indicators_and_signals(df_all)
             df_filtered = filter_strategy(df_today_signals, tolerance=m_tolerance)
@@ -174,33 +174,34 @@ if st.button("🏛️ 啟動 12 大科技板塊即時盤後掃描", type="primar
                 st.session_state.mobile_selected_stock = str(df_filtered.iloc[0]['Stock_ID'])
 
 # ==========================================
-# 6. 報表與視覺化結果呈現 (移到外部，確保重新整理時依然渲染)
+# 6. 獨立渲染區 (只要記憶池有資料，不管怎麼點按鈕，它都必定畫圖)
 # ==========================================
 if st.session_state.scan_results is not None:
     st.markdown("---")
-    st.success(f"🎉 掃描成功！目前已完成監控並保留數據。")
     st.subheader(f"📋 12大核心板塊：今日 AI 多頭貼線選股清單")
     
     if st.session_state.scan_results.empty:
         st.warning(f"ℹ️ 當前篩選條件下無符合條件的科技股。")
     else:
+        # 1. 建立乾淨的代碼對照表
         candidate_list = [str(x) for x in st.session_state.scan_results['Stock_ID'].tolist()]
         
+        # 2. 呈現數據表格
         display_df = st.session_state.scan_results[['Stock_ID', 'Close', 'MA20', 'Dist_5MA', 'AI_Win_Rate']].copy()
         display_df['Dist_5MA'] = (display_df['Dist_5MA'] * 100).round(2).astype(str) + "%"
         display_df['AI_Win_Rate'] = (display_df['AI_Win_Rate'] * 100).round(1).astype(str) + "%"
         display_df['Close'] = display_df['Close'].round(2)
         display_df['MA20'] = display_df['MA20'].round(2)
         display_df.columns = ['股票代碼', '今日收盤價', '月線(20MA)', '偏離5MA幅度', 'AI 預估波段勝率']
-        
         st.dataframe(display_df, use_container_width=True)
 
-        # 手機選股快捷鈕
+        # 3. 手機專用按鈕區
         st.markdown("---")
         st.subheader("📱 手機專用：點擊下方按鈕看日 K 線圖")
         
         display_buttons = candidate_list[:15]
         
+        # 確保預設一定有選中一檔
         if st.session_state.mobile_selected_stock not in display_buttons and display_buttons:
             st.session_state.mobile_selected_stock = display_buttons[0]
             
@@ -210,11 +211,12 @@ if st.session_state.scan_results is not None:
             is_active = (s_id == st.session_state.mobile_selected_stock)
             btn_type = "primary" if is_active else "secondary"
             
-            # 🔥 點擊按鈕直接更改選取代碼，並強制頁面更新，此時原始 K 線資料在 session_state 不會消失
+            # 🔥 關鍵改良：點擊按鈕時，直接修改 State，並立刻 rerun 讓下方圖表重畫
             if col_target.button(f"📊 {s_id}", key=f"btn_{s_id}", type=btn_type, use_container_width=True):
                 st.session_state.mobile_selected_stock = s_id
                 st.rerun()
                 
+        # 4. 繪製 K 線圖區
         current_view_stock = st.session_state.mobile_selected_stock
             
         if current_view_stock and st.session_state.raw_df_all is not None:
@@ -230,6 +232,7 @@ if st.session_state.scan_results is not None:
                     increasing_line_color='#FF3333', decreasing_line_color='#00AA00'
                 ))
                 
+                # 在畫圖時動態補上均線，不影響記憶體
                 plot_df = plot_df.copy()
                 plot_df['MA5'] = plot_df['Close'].rolling(window=5).mean()
                 plot_df['MA20'] = plot_df['Close'].rolling(window=20).mean()
