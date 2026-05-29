@@ -3,7 +3,6 @@ import pandas as pd
 import yfinance as yf
 from datetime import datetime, timedelta
 import pytz
-# 🚀 引入手機端網頁相容性最強、免伺服器字型包的 HTML5 專業 K 線套件
 from streamlit_echarts import st_echarts
 
 # ==========================================
@@ -139,7 +138,7 @@ if st.session_state.final_report_df is not None:
             
             # 🛠️ 終極黑科技：利用 ECharts 純前端 Canvas 渲染，在手機內建網頁裡永不隱形
             echarts_options = {
-                "backgroundColor": "#121212", # 暗黑系風格
+                "backgroundColor": "#121212", 
                 "legend": {
                     "data": ["K線", "5MA", "20MA"], 
                     "textStyle": {"color": "#ffffff"},
@@ -169,12 +168,11 @@ if st.session_state.final_report_df is not None:
                         "name": "K線",
                         "type": "candlestick",
                         "data": k_values,
-                        # 🎯 嚴格遵循台股市場習慣：紅漲綠跌
                         "itemStyle": {
-                            "color": "#ef5350",       # 紅色實體 (收盤 >= 開盤)
-                            "color0": "#26a69a",      # 綠色實體 (收盤 < 開盤)
-                            "borderColor": "#ef5350",   # 紅色外框
-                            "borderColor0": "#26a69a"  # 綠色外框
+                            "color": "#ef5350",       
+                            "color0": "#26a69a",      
+                            "borderColor": "#ef5350",   
+                            "borderColor0": "#26a69a"  
                         }
                     },
                     {
@@ -194,7 +192,6 @@ if st.session_state.final_report_df is not None:
                 ]
             }
             
-            # 在網頁上渲染出 400 像素高、觸控流暢的實體 K 線圖
             st_echarts(options=echarts_options, height="400px")
             
             # 數據看板區
@@ -208,6 +205,6 @@ if st.session_state.final_report_df is not None:
     st.markdown("---")
     st.subheader("📋 今日 AI 多頭貼線選股對照清單 (僅供參考)")
     if st.session_state.final_report_df.empty:
-        st.warning("ℹ   今日盤後無完全符合強勢貼線的多頭核心股。")
+        st.warning("ℹ️ 今日盤後無完全符合強勢貼線的多頭核心股。")
     else:
         st.dataframe(st.session_state.final_report_df, use_container_width=True)
