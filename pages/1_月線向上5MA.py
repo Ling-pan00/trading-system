@@ -3,8 +3,8 @@ import pandas as pd
 import yfinance as yf
 import twstock
 
-st.set_page_config(page_title="法人三池 v4 stable", layout="wide")
-st.title("📊 三池法人進場系統 v4（穩定版）")
+st.set_page_config(page_title="法人三池 stable v5", layout="wide")
+st.title("📊 三池法人進場系統（穩定修正版）")
 
 # =========================
 # 股票池
@@ -23,6 +23,7 @@ def get_stock_list():
                 })
     return stocks
 
+
 stock_list = get_stock_list()
 ticker_map = {s["ticker"]: s for s in stock_list}
 tickers = list(ticker_map.keys())
@@ -31,36 +32,51 @@ st.write(f"📦 股票數：{len(tickers)}")
 
 
 # =========================
-# 池分類（穩定法人版）
+# 池分類（修正版核心）
 # =========================
 def classify_pool(open_p, close, high, low, ma5, ma10, ma20, volume):
 
+    # ===== volume 安全處理 =====
+    try:
+        vol_ma5 = volume.rolling(5).mean().iloc[-1]
+        vol_ok = volume.iloc[-1] >= vol_ma5 * 0.8
+    except:
+        vol_ok = True
+
+    # =========================
     # 🔴 第三池（主升段）
-    if (ma5 > ma10 > ma20) and (close > ma20):
-        vol_ok = volume.iloc[-1] >= volume.rolling(5).mean().iloc[-1]
-        if vol_ok:
-            return "🔴 第三池（主升持有）"
+    # =========================
+    third_pool = (
+        ma5 > ma10 > ma20 and
+        close > ma20
+    )
 
+    # =========================
     # 🟠 第二池（回測買點）
-    if (close > ma20) and (close > ma5) and (ma5 > ma10):
-        return "🟠 第二池（回測買點）"
+    # =========================
+    second_pool = (
+        close > ma20 and
+        close > ma5 and
+        ma5 > ma10
+    )
 
-    # 🟡 第一池（法人試單池：穩定版本）
-    vol_ok = volume.iloc[-1] >= volume.rolling(5).mean().iloc[-1] * 0.8
-
-    body = abs(close - open_p.iloc[-1])
-    upper_shadow = high.iloc[-1] - max(close, open_p.iloc[-1])
-
-    # 🔥 關鍵修正：不再用 shift（造成你第一池=0的主因）
-    ma20_ok = close > ma20
-
+    # =========================
+    # 🟡 第一池（試單轉強）
+    # =========================
     first_pool = (
-        ma20_ok and
+        close > ma20 and
         vol_ok
     )
 
-    if first_pool:
-        return "🟡 第一池（試單轉強）"
+    # =========================
+    # 🚨 互斥排序（關鍵）
+    # =========================
+    if third_pool:
+        return "🔴 第三池（主升）"
+    elif second_pool:
+        return "🟠 第二池（回測）"
+    elif first_pool:
+        return "🟡 第一池（試單）"
 
     return None
 
@@ -87,7 +103,7 @@ def intraday_signal(open_p, close_y, low_y, high_y, vol, vol_y):
 # =========================
 # 盤後掃描
 # =========================
-if st.button("🚀 盤後選股 v4 stable"):
+if st.button("🚀 盤後選股"):
 
     results = []
 
@@ -115,15 +131,15 @@ if st.button("🚀 盤後選股 v4 stable"):
             for t in batch:
 
                 try:
-                    df_s = data[t]
-                    if df_s.empty:
+                    df = data[t]
+                    if df.empty:
                         continue
 
-                    open_p = df_s["Open"]
-                    close = df_s["Close"]
-                    high = df_s["High"]
-                    low = df_s["Low"]
-                    volume = df_s["Volume"]
+                    open_p = df["Open"]
+                    close = df["Close"]
+                    high = df["High"]
+                    low = df["Low"]
+                    volume = df["Volume"]
 
                     if len(close) < 20:
                         continue
@@ -133,6 +149,10 @@ if st.button("🚀 盤後選股 v4 stable"):
                     ma20 = close.rolling(20).mean().iloc[-1]
 
                     price = close.iloc[-1]
+
+                    # ⭐ 月線濾網（保留）
+                    if price <= ma20:
+                        continue
 
                     pool = classify_pool(
                         open_p.iloc[-1],
@@ -187,7 +207,7 @@ if st.button("🚀 盤後選股 v4 stable"):
     df = pd.DataFrame(results)
 
     # =========================
-    # Top10（穩定排序）
+    # Top10
     # =========================
     pool1 = df[df["池別"].str.contains("第一")].head(10)
     pool2 = df[df["池別"].str.contains("第二")].head(10)
