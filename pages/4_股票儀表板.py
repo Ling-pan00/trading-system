@@ -3,9 +3,9 @@ import pandas as pd
 import yfinance as yf
 import twstock
 
-st.set_page_config(page_title="三池選股系統（乾淨版）", layout="wide")
+st.set_page_config(page_title="三池選股系統 v2", layout="wide")
 
-st.title("📊 三池選股系統（純策略版）")
+st.title("📊 三池選股系統（分池 + 評分版）")
 
 # =========================
 # 股票池
@@ -17,7 +17,6 @@ def get_stock_list():
     for code, info in twstock.codes.items():
         if info.market in ["上市", "上櫃"]:
             if len(code) == 4 and code.isdigit():
-
                 ticker = f"{code}.TW" if info.market == "上市" else f"{code}.TWO"
 
                 stocks.append({
@@ -46,7 +45,7 @@ st.write(f"📦 股票數量：{len(tickers)}")
 # =========================
 def classify_pool(change_pct, close, ma5, ma10, ma20, vol, vol_ma5, is_red):
 
-    # 🟡 動能股池
+    # 🟡 動能股
     if (
         change_pct > 3 and change_pct < 10
         and close > ma5
@@ -54,7 +53,7 @@ def classify_pool(change_pct, close, ma5, ma10, ma20, vol, vol_ma5, is_red):
     ):
         return "動能股"
 
-    # 🚀 突破股池
+    # 🚀 突破股
     if (
         close > ma20
         and vol > vol_ma5
@@ -63,7 +62,7 @@ def classify_pool(change_pct, close, ma5, ma10, ma20, vol, vol_ma5, is_red):
     ):
         return "突破股"
 
-    # 🧊 回檔強勢股池
+    # 🧊 回檔股
     if (
         close < ma5
         and close > ma10
@@ -75,20 +74,28 @@ def classify_pool(change_pct, close, ma5, ma10, ma20, vol, vol_ma5, is_red):
 
 
 # =========================
-# 風控濾網
+# 評分系統
 # =========================
-def trade_filter(change_pct, volume_ok, upper_shadow):
+def score(change_pct, close, ma5, ma10, ma20, vol, vol_ma5):
 
-    # ❌ +8% 不追
-    no_fomo = change_pct < 8
+    s = 0
 
-    # ❌ 連3紅K（簡化：略過但保守）
-    no_overheat = True
+    if close > ma5:
+        s += 1
 
-    # ❌ 爆量長上影
-    no_distribution = not upper_shadow
+    if ma5 > ma10:
+        s += 1
 
-    return no_fomo and no_overheat and no_distribution
+    if ma10 > ma20:
+        s += 1
+
+    if vol > vol_ma5:
+        s += 1
+
+    if change_pct > 3:
+        s += 1
+
+    return s
 
 
 # =========================
@@ -108,7 +115,7 @@ if st.button("🚀 開始掃描"):
 
         batch = tickers[i*batch_size:(i+1)*batch_size]
 
-        status.text(f"📥 第 {i+1}/{total_batches} 批")
+        status.text(f"📥 批次 {i+1}/{total_batches}")
 
         try:
             data = yf.download(
@@ -152,8 +159,6 @@ if st.button("🚀 開始掃描"):
                         high.iloc[-1] - latest_close
                     ) > (latest_close - open_price.iloc[-1])
 
-                    volume_ok = latest_vol > vol_ma5
-
                     pool = classify_pool(
                         change_pct,
                         latest_close,
@@ -165,7 +170,21 @@ if st.button("🚀 開始掃描"):
                         is_red
                     )
 
-                    ok = trade_filter(change_pct, volume_ok, upper_shadow)
+                    s = score(
+                        change_pct,
+                        latest_close,
+                        ma5,
+                        ma10,
+                        ma20,
+                        latest_vol,
+                        vol_ma5
+                    )
+
+                    # 風控：+8%不追 + 長上影排除
+                    ok = (
+                        change_pct < 8
+                        and not upper_shadow
+                    )
 
                     if pool and ok:
 
@@ -177,7 +196,8 @@ if st.button("🚀 開始掃描"):
                             "收盤": round(latest_close, 2),
                             "漲跌%": round(change_pct, 2),
                             "量": int(latest_vol),
-                            "池別": pool
+                            "池別": pool,
+                            "分數": s
                         })
 
                 except:
@@ -191,26 +211,47 @@ if st.button("🚀 開始掃描"):
     status.text("✅ 完成")
 
     # =========================
-    # 輸出
+    # 結果處理
     # =========================
     if results:
 
         df = pd.DataFrame(results)
 
-        # 池別統計
-        pool_count = df["池別"].value_counts()
+        df = df.sort_values("分數", ascending=False)
 
+        # =========================
+        # 三池分開 Top 5
+        # =========================
+        momentum_df = df[df["池別"] == "動能股"].head(5)
+        breakout_df = df[df["池別"] == "突破股"].head(5)
+        pullback_df = df[df["池別"] == "回檔股"].head(5)
+
+        # =========================
         # 主交易池
+        # =========================
+        pool_count = df["池別"].value_counts()
         main_pool = pool_count.idxmax() if len(pool_count) > 0 else "無"
 
+        # =========================
+        # UI
+        # =========================
         st.subheader("📌 今日主交易池")
         st.write(main_pool)
 
-        st.subheader("🥇 Top 10 強勢股")
+        st.subheader("🟡 動能股 Top 5")
+        st.dataframe(momentum_df, use_container_width=True)
+
+        st.subheader("🚀 突破股 Top 5")
+        st.dataframe(breakout_df, use_container_width=True)
+
+        st.subheader("🧊 回檔股 Top 5")
+        st.dataframe(pullback_df, use_container_width=True)
+
+        st.subheader("🥇 今日總強勢 Top 10")
         st.dataframe(df.head(10), use_container_width=True)
 
         st.subheader("📊 三池分布")
         st.write(pool_count)
 
     else:
-        st.warning("⚠️ 今天沒有符合條件的股票")
+        st.warning("⚠️ 沒有符合條件的股票")
