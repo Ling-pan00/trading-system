@@ -45,22 +45,26 @@ def classify_pool(open_p, close, high, low, ma5, ma10, ma20, volume):
     if (close > ma20) and (close > ma5) and (ma5 > ma10):
         return "🟠 第二池（回測買點）"
 
-    # 🟡 第一池：試單轉強（法人K）
-    body = abs(close - open_p)
-    upper_shadow = high - max(close, open_p)
+    # # 🟡 第一池（法人試單 - 修正版）
+body = abs(price - open_p.iloc[-1])
+upper_shadow = high.iloc[-1] - max(price, open_p.iloc[-1])
 
-    vol_ok = volume.iloc[-1] >= volume.iloc[-2] * 0.8
-    ma20_up = ma20 > close.rolling(20).mean().shift(1).iloc[-1]
+# 量能改成穩定版（避免被 yf 洗掉）
+vol_ok = volume.iloc[-1] >= volume.rolling(5).mean().iloc[-1] * 0.8
 
-    if (
-        close > ma20 and
-        vol_ok and
-        upper_shadow <= body and
-        ma20_up
-    ):
-        return "🟡 第一池（試單轉強）"
+# MA20 趨勢放寬（避免太嚴）
+ma20_up = ma20 > close.rolling(20).mean().shift(3).iloc[-1]
 
-    return None
+first_pool = (
+    price > ma20 and
+    ma20_up and
+    vol_ok
+)
+
+if first_pool:
+    return "🟡 第一池（試單轉強）"
+
+
 
 
 # =========================
