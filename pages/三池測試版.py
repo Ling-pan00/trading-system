@@ -11,6 +11,12 @@ st.set_page_config(page_title="三池獨立監控系統", layout="wide")
 
 st.title("📊 三池獨立交易監控系統 Pro ✖ 轉折波段連線")
 
+# 初始化一個 Session 變數，用來記錄當前要畫圖的股票代號
+if "selected_ticker" not in st.session_state:
+    st.session_state["selected_ticker"] = None
+if "selected_name" not in st.session_state:
+    st.session_state["selected_name"] = ""
+
 # =========================
 # 股票池
 # =========================
@@ -151,71 +157,46 @@ if st.button("🚀 盤後選股"):
 
     if results:
         df = pd.DataFrame(results)
-        breakout_df = df[df["池別"] == "🚀 突破股"].sort_values("分數", ascending=False).head(5).copy()
-        momentum_df = df[df["池別"] == "🟡 動能股"].sort_values("分數", ascending=False).head(5).copy()
-        pullback_df = df[df["池別"] == "🧊 回檔股"].sort_values("分數", ascending=False).head(5).copy()
-
-        # 【關鍵除錯】：重設索引，確保所有資料型態都是最純的標準 Python 型態 (解決 st.dataframe 點擊閃退問題)
-        for target_df in [breakout_df, momentum_df, pullback_df]:
-            if not target_df.empty:
-                target_df.reset_index(drop=True, inplace=True)
-                target_df["代號"] = target_df["代號"].astype(str)
-                target_df["名稱"] = target_df["名稱"].astype(str)
-                target_df["ticker"] = target_df["ticker"].astype(str)
-                target_df["分數"] = target_df["分數"].astype(int)
-                target_df["池別"] = target_df["池別"].astype(str)
-                target_df["收盤"] = target_df["收盤"].astype(float)
-
-        # 存入 session_state
-        st.session_state["breakout"] = breakout_df
-        st.session_state["momentum"] = momentum_df
-        st.session_state["pullback"] = pullback_df
+        st.session_state["breakout"] = df[df["池別"] == "🚀 突破股"].sort_values("分數", ascending=False).head(5)
+        st.session_state["momentum"] = df[df["池別"] == "🟡 動能股"].sort_values("分數", ascending=False).head(5)
+        st.session_state["pullback"] = df[df["池別"] == "🧊 回檔股"].sort_values("分數", ascending=False).head(5)
 
 
 # =========================================================================
-# 顯示盤後選股結果 (支援點擊表格列直接連動)
+# 顯示選股成果 (使用安全按鈕流，徹底告別崩潰)
 # =========================================================================
-if "selected_ticker_from_table" not in st.session_state:
-    st.session_state["selected_ticker_from_table"] = None
-
 if "breakout" in st.session_state:
-    st.markdown("💡 **提示：直接用滑鼠點擊下方任何一個表格的「最左側勾選框」，即可立刻切換下方 K 線圖！**")
+    st.markdown("💡 **提示：點擊股票右側的『📈 看圖』按鈕，下方將立刻畫出半年轉折波段圖！**")
     
-    # ---------------- 突破股表格 ----------------
-    st.subheader("🚀 突破股 Top5")
-    sel_breakout = st.dataframe(
-        st.session_state["breakout"], 
-        use_container_width=True,
-        on_select="rerun",
-        selection_mode="single_row"
-    )
-    if sel_breakout.selection.rows:
-        selected_row_idx = sel_breakout.selection.rows[0]
-        st.session_state["selected_ticker_from_table"] = st.session_state["breakout"].iloc[selected_row_idx]["ticker"]
+    # 建立三欄排版展示 Top5，並附帶看圖按鈕
+    p_col1, p_col2, p_col3 = st.columns(3)
+    
+    with p_col1:
+        st.subheader("🚀 突破股 Top5")
+        st.dataframe(st.session_state["breakout"], use_container_width=True)
+        for _, row in st.session_state["breakout"].iterrows():
+            if st.button(f"📈 看 {row['代號']} {row['名稱']}", key=f"btn_{row['代號']}"):
+                st.session_state["selected_ticker"] = row["ticker"]
+                st.session_state["selected_name"] = row["名稱"]
+                st.rerun()
 
-    # ---------------- 動能股表格 ----------------
-    st.subheader("🟡 動能股 Top5")
-    sel_momentum = st.dataframe(
-        st.session_state["momentum"], 
-        use_container_width=True,
-        on_select="rerun",
-        selection_mode="single_row"
-    )
-    if sel_momentum.selection.rows:
-        selected_row_idx = sel_momentum.selection.rows[0]
-        st.session_state["selected_ticker_from_table"] = st.session_state["momentum"].iloc[selected_row_idx]["ticker"]
+    with p_col2:
+        st.subheader("🟡 動能股 Top5")
+        st.dataframe(st.session_state["momentum"], use_container_width=True)
+        for _, row in st.session_state["momentum"].iterrows():
+            if st.button(f"📈 看 {row['代號']} {row['名稱']}", key=f"btn_{row['代號']}"):
+                st.session_state["selected_ticker"] = row["ticker"]
+                st.session_state["selected_name"] = row["名稱"]
+                st.rerun()
 
-    # ---------------- 回檔股表格 ----------------
-    st.subheader("🧊 回檔股 Top5")
-    sel_pullback = st.dataframe(
-        st.session_state["pullback"], 
-        use_container_width=True,
-        on_select="rerun",
-        selection_mode="single_row"
-    )
-    if sel_pullback.selection.rows:
-        selected_row_idx = sel_pullback.selection.rows[0]
-        st.session_state["selected_ticker_from_table"] = st.session_state["pullback"].iloc[selected_row_idx]["ticker"]
+    with p_col3:
+        st.subheader("🧊 回檔股 Top5")
+        st.dataframe(st.session_state["pullback"], use_container_width=True)
+        for _, row in st.session_state["pullback"].iterrows():
+            if st.button(f"📈 看 {row['代號']} {row['名稱']}", key=f"btn_{row['代號']}"):
+                st.session_state["selected_ticker"] = row["ticker"]
+                st.session_state["selected_name"] = row["名稱"]
+                st.rerun()
 
 
 # =========================
@@ -276,7 +257,7 @@ if st.button("🔄 更新盤中監控"):
 
 
 # =========================================================================
-# 🎯 核心功能：選股池連動轉折 K 線圖 (自動動態鎖定「最近半年」)
+# 🎯 核心功能：選股池連動轉折 K 線圖 (最穩健按鈕流版本)
 # =========================================================================
 st.write("---")
 st.subheader("🎯 智慧選股連動看盤監測器")
@@ -289,12 +270,19 @@ if "breakout" in st.session_state:
     ]).drop_duplicates(subset=['ticker'])
     
     options = [f"{row['代號']} - {row['名稱']} ({row['池別']})" for _, row in pool_all.iterrows()]
-    ticker_to_option_index = {row['ticker']: i for i, row in pool_all.iterrows()}
     
-    # 決定預選哪一檔股票
+    # 如果使用者還沒點擊任何按鈕，預設選中第一檔
+    if st.session_state["selected_ticker"] is None:
+        st.session_state["selected_ticker"] = pool_all.iloc[0]["ticker"]
+        st.session_state["selected_name"] = pool_all.iloc[0]["名稱"]
+
+    # 找出當前選中的股票在下拉選單中的索引位置
+    current_code = ticker_map[st.session_state["selected_ticker"]]["code"]
     default_idx = 0
-    if st.session_state["selected_ticker_from_table"] in ticker_to_option_index:
-        default_idx = list(pool_all['ticker']).index(st.session_state["selected_ticker_from_table"])
+    for idx, opt in enumerate(options):
+        if opt.startswith(current_code):
+            default_idx = idx
+            break
 
     selected_option = st.selectbox(
         "👉 您也可以在此手動切換想觀察的策略股：", 
