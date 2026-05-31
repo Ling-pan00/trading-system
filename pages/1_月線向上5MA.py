@@ -5,8 +5,8 @@ import twstock
 import numpy as np
 
 # 設定 Streamlit 頁面配置
-st.set_page_config(page_title="四池量化 Pro v2.2", layout="wide")
-st.title("📊 四池量化交易系統 Pro v2.2（效能與邏輯完整版）")
+st.set_page_config(page_title="四池量化 Pro v2.3", layout="wide")
+st.title("📊 四池量化交易系統 Pro v2.3（800張放寬版 + 8%防追高鐵律）")
 
 # ==========================================
 # 📦 股票池模組 (自動抓取台股上市/上櫃代號)
@@ -125,7 +125,7 @@ def trade_levels(price, ma5, ma10, pool):
 
 
 # ==========================================
-# 🚀 盤後選股功能 (效能優化批次下載)
+# 🚀 盤後選股功能 (包含 800張放寬量 + 8%防追高)
 # ==========================================
 if st.button("🚀 執行盤後策略選股"):
     results = []
@@ -139,7 +139,6 @@ if st.button("🚀 執行盤後策略選股"):
         batch = tickers[i * batch_size:(i + 1) * batch_size]
         
         try:
-            # 批次打包下載，大幅縮短執行時間
             data = yf.download(tickers=batch, period="3mo", interval="1d", group_by="ticker", progress=False, threads=True)
         except Exception as e:
             continue
@@ -158,16 +157,25 @@ if st.button("🚀 執行盤後策略選股"):
                 if df.empty or len(df) < 30:
                     continue
 
-                # 計算指標與評分
+                # 基礎數據提取
                 df = add_indicators(df)
                 price = df["Close"].iloc[-1]
                 open_price = df["Open"].iloc[-1]
+                volume = df["Volume"].iloc[-1]
+                
+                # 【濾網 1】將總股數換算為台股「張數」
+                volume_sheets = volume / 1000 
+                
+                # 🔥 實戰優化：門檻設為 800 張，確保中小型黑馬股順利通關
+                if volume_sheets < 800:
+                    continue
+
                 ma5 = df["ma5"].iloc[-1]
                 ma10 = df["ma10"].iloc[-1]
                 ma20 = df["ma20"].iloc[-1]
                 change_pct = (price - df["Close"].iloc[-2]) / df["Close"].iloc[-2]
 
-                s = score(price, ma5, ma10, ma20, df["Volume"].iloc[-1], df["vol_ma5"].iloc[-1], change_pct)
+                s = score(price, ma5, ma10, ma20, volume, df["vol_ma5"].iloc[-1], change_pct)
                 pool = classify_pool(s, df, price, ma5, ma10, ma20, open_price)
 
                 if pool is None:
@@ -176,6 +184,13 @@ if st.button("🚀 執行盤後策略選股"):
                 # 計算關鍵價位
                 entry, stop, target = trade_levels(price, ma5, ma10, pool)
 
+                # ==========================================
+                # 🔥 【濾網 3】安全邊際 / 防追高乖離濾網（8% 限制在線）
+                # ==========================================
+                risk_pct = (price - stop) / stop
+                if risk_pct > 0.08:
+                    continue
+
                 results.append({
                     "代號": ticker_map[t]["code"],
                     "名稱": ticker_map[t]["name"],
@@ -183,6 +198,7 @@ if st.button("🚀 執行盤後策略選股"):
                     "池別": pool,
                     "分數": s,
                     "當日收盤": round(price, 2),
+                    "成交量(張)": int(volume_sheets),
                     "建議進場": entry,
                     "防守停損": stop,
                     "波段目標": target
@@ -191,26 +207,27 @@ if st.button("🚀 執行盤後策略選股"):
                 continue
         progress.progress((i + 1) / total_batches)
     
-    status_text.text("🎉 全市場掃描完成！")
+    status_text.text("🎉 精煉選股完成！")
 
     # 輸出選股結果至頁面與 Session State
     if not results:
-        st.warning("⚠️ 當前市場環境下，沒有符合四池篩選條件的股票。")
+        st.warning("⚠️ 經過成交量（800張）與防追高限制（8%）篩選後，目前沒有符合標準的標的。")
     else:
         df_res = pd.DataFrame(results)
         
         # 依序渲染四個池子的表格
         for pool_name in ["🔴 第四池", "🔵 第三池", "🟠 第二池", "🟡 第一池"]:
-            st.subheader(f"📊 策略選股名單 - {pool_name}")
-            sub_df = df_res[df_res["池別"] == pool_name].drop(columns=["ticker"])
+            st.subheader(f"📊 策略精選名單 - {pool_name}")
+            sub_df = df_res[df_res["池別"] == pool_name]
             
             if not sub_df.empty:
+                # 貼心功能：自動依照「成交量(張)」由大到小排序，把人氣最高的股票排前面
+                sub_df = sub_df.sort_values(by="成交量(張)", ascending=False).drop(columns=["ticker"])
                 st.dataframe(sub_df, use_container_width=True)
+                st.session_state[f"pool_{pool_name}"] = df_res[df_res["池別"] == pool_name]
             else:
                 st.info("此池目前無符合條件股票")
-            
-            # 將完整含 ticker 的 DataFrame 存入 session_state 供盤中監控連動
-            st.session_state[f"pool_{pool_name}"] = df_res[df_res["池別"] == pool_name]
+                st.session_state[f"pool_{pool_name}"] = pd.DataFrame()
 
 
 # ==========================================
@@ -251,7 +268,7 @@ def run_monitor_optimized(pool_df):
             close_now = df["Close"].iloc[-1]
             ma5 = df["Close"].rolling(5).mean().iloc[-1]
             
-            # 關鍵修正：近 5 日最高價（排除今日盤中，避免自我實現的突破）
+            # 近 5 日最高價（排除今日盤中，避免自我實現的突破）
             high_5 = df["High"].iloc[-6:-1].max()
             
             vol_today = df["Volume"].iloc[-1]
