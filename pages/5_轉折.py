@@ -65,42 +65,58 @@ try:
                 zigzag_points.append((df.index.get_loc(lowest_idx), df.loc[lowest_idx, 'Low']))
                 df.loc[lowest_idx, 'Label'] = "B"
 
-        # 3. 準備均線趨勢文字
+        # 3. 取得均線趨勢與資訊
         def get_trend_info(col_name):
             now = df[col_name].iloc[-1]
             pre = df[col_name].iloc[-2]
             arrow = "▲" if now >= pre else "▼"
-            color = "red" if now >= pre else "green"
-            return f"{col_name}: {now:>8.2f} {arrow}", color
+            return f"{col_name}: {now:>8.2f} {arrow}"
 
-        ma5_txt, ma5_c = get_trend_info('5MA')
-        ma10_txt, ma10_c = get_trend_info('10MA')
-        ma20_txt, ma20_c = get_trend_info('20MA')
+        ma5_txt = get_trend_info('5MA')
+        ma10_txt = get_trend_info('10MA')
+        ma20_txt = get_trend_info('20MA')
 
         # 4. 繪製圖表
         mc = mpf.make_marketcolors(up='red', down='green', edge='inherit', wick='inherit', volume='in')
         s = mpf.make_mpf_style(marketcolors=mc, gridstyle='--')
 
+        # 均線顏色設定
+        color_5ma = 'orange'
+        color_10ma = 'blue'
+        color_20ma = 'purple'
+
         plots = [
-            mpf.make_addplot(df['5MA'], color='orange', width=1),
-            mpf.make_addplot(df['10MA'], color='blue', width=1),
-            mpf.make_addplot(df['20MA'], color='purple', width=1)
+            mpf.make_addplot(df['5MA'], color=color_5ma, width=1),
+            mpf.make_addplot(df['10MA'], color=color_10ma, width=1),
+            mpf.make_addplot(df['20MA'], color=color_20ma, width=1)
         ]
 
         fig, axlist = mpf.plot(
             df, type='candle', style=s, addplot=plots, 
             returnfig=True, figsize=(12, 8), volume=True,
-            panel_ratios=(4,1) # 調整主圖與成交量的比例
+            panel_ratios=(4,1)
         )
         
         main_ax = axlist[0]
 
-        # 【核心修改】在圖表內繪製趨勢儀表板
-        info_str = f"{ma5_txt}\n{ma10_txt}\n{ma20_txt}"
-        # 放置在左上角 (0.02, 0.98) 的位置
-        main_ax.text(0.02, 0.97, info_str, transform=main_ax.transAxes,
-                    fontsize=12, verticalalignment='top', family='monospace',
-                    bbox=dict(boxstyle='round', facecolor='white', alpha=0.7, edgecolor='gray'))
+        # 【核心修改】在圖表右上角繪製多色文字資訊
+        # 先畫一個白底的外框
+        main_ax.text(0.98, 0.97, " \n \n ", transform=main_ax.transAxes,
+                    fontsize=12, verticalalignment='top', horizontalalignment='right', family='monospace',
+                    bbox=dict(boxstyle='round,pad=0.5', facecolor='white', alpha=0.85, edgecolor='gray'))
+        
+        # 依序在框內填入對應顏色的文字 (調整 y 軸間距 y_space)
+        y_start = 0.95
+        y_space = 0.035
+        
+        main_ax.text(0.96, y_start, ma5_txt, transform=main_ax.transAxes, color=color_5ma,
+                    fontsize=12, weight='bold', verticalalignment='top', horizontalalignment='right', family='monospace')
+        
+        main_ax.text(0.96, y_start - y_space, ma10_txt, transform=main_ax.transAxes, color=color_10ma,
+                    fontsize=12, weight='bold', verticalalignment='top', horizontalalignment='right', family='monospace')
+        
+        main_ax.text(0.96, y_start - (y_space * 2), ma20_txt, transform=main_ax.transAxes, color=color_20ma,
+                    fontsize=12, weight='bold', verticalalignment='top', horizontalalignment='right', family='monospace')
 
         # 5. 連接轉折線
         if len(zigzag_points) > 1:
