@@ -4,8 +4,8 @@ import yfinance as yf
 import twstock
 import numpy as np
 
-st.set_page_config(page_title="三池量化 Pro v1.1", layout="wide")
-st.title("📊 三池量化交易系統 Pro v1.1（加速版）")
+st.set_page_config(page_title="三池量化 Pro v1.2", layout="wide")
+st.title("📊 三池量化交易系統 Pro v1.2（完整進出場版）")
 
 # =========================
 # 股票池
@@ -32,7 +32,7 @@ tickers = list(ticker_map.keys())
 st.write(f"📦 股票數：{len(tickers)}")
 
 # =========================
-# 技術指標（加速版）
+# 技術指標
 # =========================
 def add_indicators(df):
     df = df.copy()
@@ -64,7 +64,7 @@ def trend_ok(ma5, ma10, ma20, price):
 
 
 # =========================
-# 三池
+# 三池分類
 # =========================
 def classify_pool(s, trend):
     if s >= 6 and trend:
@@ -76,7 +76,33 @@ def classify_pool(s, trend):
 
 
 # =========================
-# 盤中訊號（保留原本）
+# 進出場模型（核心補齊）
+# =========================
+def trade_levels(price, ma5, ma10, pool):
+
+    entry = price
+
+    # 預設
+    stop = price * 0.95
+    target = price * 1.15
+
+    if pool == "🟠 第二池":
+        stop = ma5
+        target = price * 1.2
+
+    elif pool == "🔴 第三池":
+        stop = ma10
+        target = price * 1.25
+
+    else:
+        stop = price * 0.94
+        target = price * 1.12
+
+    return round(entry, 2), round(stop, 2), round(target, 2)
+
+
+# =========================
+# 盤中訊號
 # =========================
 def intraday_signal(open_p, close_y, low_y, high_y, vol, vol_y):
 
@@ -87,17 +113,15 @@ def intraday_signal(open_p, close_y, low_y, high_y, vol, vol_y):
 
     if strong and hold and vol_ok:
         return "🟢 BUY" if breakout else "🟡 WATCH"
-
     if hold:
         return "🟡 WATCH"
-
     return "🔴 NO"
 
 
 # =========================
 # 🚀 盤後選股（快速版）
 # =========================
-if st.button("🚀 盤後選股（快速）"):
+if st.button("🚀 盤後選股"):
 
     results = []
 
@@ -156,13 +180,25 @@ if st.button("🚀 盤後選股（快速）"):
 
                     pool = classify_pool(s, trend)
 
+                    entry, stop, target = trade_levels(
+                        price,
+                        df["ma5"].iloc[-1],
+                        df["ma10"].iloc[-1],
+                        pool
+                    )
+
                     results.append({
                         "代號": ticker_map[t]["code"],
                         "名稱": ticker_map[t]["name"],
                         "ticker": t,
                         "分數": s,
                         "池別": pool,
-                        "收盤": price
+                        "收盤": price,
+
+                        # ⭐ 進出場
+                        "進場價": entry,
+                        "停損價": stop,
+                        "目標價": target
                     })
 
                 except:
@@ -175,35 +211,30 @@ if st.button("🚀 盤後選股（快速）"):
 
     df = pd.DataFrame(results)
 
-    # 排名
     df["rank"] = df["分數"]
     df = df.sort_values("rank", ascending=False)
 
     st.subheader("🏆 Top 20 排名")
     st.dataframe(df.head(20), use_container_width=True)
 
-    pool1 = df[df["池別"]=="🟡 第一池"].head(10)
-    pool2 = df[df["池別"]=="🟠 第二池"].head(10)
-    pool3 = df[df["池別"]=="🔴 第三池"].head(10)
-
-    st.subheader("🟡 第一池")
-    st.dataframe(pool1)
+    st.subheader("🔴 第三池")
+    st.dataframe(df[df["池別"]=="🔴 第三池"].head(10))
 
     st.subheader("🟠 第二池")
-    st.dataframe(pool2)
+    st.dataframe(df[df["池別"]=="🟠 第二池"].head(10))
 
-    st.subheader("🔴 第三池")
-    st.dataframe(pool3)
+    st.subheader("🟡 第一池")
+    st.dataframe(df[df["池別"]=="🟡 第一池"].head(10))
 
-    st.session_state["pool1"] = pool1
-    st.session_state["pool2"] = pool2
-    st.session_state["pool3"] = pool3
+    st.session_state["pool1"] = df[df["池別"]=="🟡 第一池"]
+    st.session_state["pool2"] = df[df["池別"]=="🟠 第二池"]
+    st.session_state["pool3"] = df[df["池別"]=="🔴 第三池"]
 
 
 # =========================
-# 📈 盤中監控（回來了 + 加速）
+# 📈 盤中監控（完整回來）
 # =========================
-st.subheader("📈 盤中監控（即時）")
+st.subheader("📈 盤中監控")
 
 
 def run_monitor(df):
