@@ -5,7 +5,7 @@ import twstock
 import numpy as np
 
 st.set_page_config(page_title="三池量化 Pro v1.3", layout="wide")
-st.title("📊 三池量化交易系統 Pro v1.3（完整進出場版）")
+st.title("📊 三池量化交易系統 Pro v1.3（完整修正版）")
 
 # =========================
 # 股票池
@@ -36,9 +36,7 @@ def get_stock_list():
 
 
 stock_list = get_stock_list()
-
 ticker_map = {s["ticker"]: s for s in stock_list}
-
 tickers = list(ticker_map.keys())
 
 st.write(f"📦 股票數：{len(tickers)}")
@@ -47,7 +45,6 @@ st.write(f"📦 股票數：{len(tickers)}")
 # 技術指標
 # =========================
 def add_indicators(df):
-
     df = df.copy()
 
     df["ma5"] = df["Close"].rolling(5).mean()
@@ -58,7 +55,6 @@ def add_indicators(df):
 
     return df
 
-
 # =========================
 # 分數模型
 # =========================
@@ -66,77 +62,85 @@ def score(price, ma5, ma10, ma20, vol, vol_ma5, change_pct):
 
     s = 0
 
-    if price > ma5:
-        s += 2
-
-    if ma5 > ma10:
-        s += 1
-
-    if ma10 > ma20:
-        s += 1
-
-    if vol > vol_ma5:
-        s += 2
-
-    if change_pct > 0:
-        s += 1
+    s += 2 if price > ma5 else 0
+    s += 1 if ma5 > ma10 else 0
+    s += 1 if ma10 > ma20 else 0
+    s += 2 if vol > vol_ma5 else 0
+    s += 1 if change_pct > 0 else 0
 
     return s
-
-
+    # =========================
+# 三池條件（完全依你的規則修正）
 # =========================
-# 三池分類 v1.3
-# =========================
-def classify_pool(
-    s,
-    price,
-    open_price,
-    ma5,
-    ma10,
-    ma20,
-    prev_close,
-    prev_ma5,
-    month_up
-):
 
-    # 第一池：回檔轉強
-    pool1 = (
-        month_up
-        and price > ma20
-        and (
-    df["Close"].iloc[-2] < df["ma5"].iloc[-2]
-    or
-    df["Close"].iloc[-3] < df["ma5"].iloc[-3]
-)
-        and price > ma5
-        and price > open_price
-    )
+def is_pool1(df):
+    """
+    🟡 第一池：
+    月線向上
+    股價在月線上
+    曾跌破MA5
+    今天站回MA5
+    紅K
+    """
 
-    # 第三池：主升段強勢
-    pool3 = (
+    ma20 = df["ma20"]
+    ma5 = df["ma5"]
+
+    price = df["Close"].iloc[-1]
+    open_price = df["Open"].iloc[-1]
+
+    month_up = ma20.iloc[-1] > ma20.iloc[-5]
+    above_ma20 = price > ma20.iloc[-1]
+
+    dipped = (df["Close"].iloc[-5:-1] < ma5.iloc[-5:-1]).any()
+    reclaim_ma5 = df["Close"].iloc[-1] > ma5.iloc[-1] and df["Close"].iloc[-2] <= ma5.iloc[-2]
+
+    red_k = price > open_price
+
+    return month_up and above_ma20 and dipped and reclaim_ma5 and red_k
+
+
+def is_pool2(df, s):
+    """
+    🟠 第二池：
+    月線向上
+    股價在月線上
+    分數 ≥ 4
+    """
+
+    ma20 = df["ma20"].iloc[-1]
+    month_up = df["ma20"].iloc[-1] > df["ma20"].iloc[-5]
+    price = df["Close"].iloc[-1]
+
+    return month_up and price > ma20 and s >= 4
+
+
+def is_pool3(df, s):
+    """
+    🔴 第三池：
+    月線向上
+    股價在月線上
+    分數 ≥ 6
+    MA5 > MA10 > MA20
+    今日量 > 5日均量
+    """
+
+    ma5 = df["ma5"].iloc[-1]
+    ma10 = df["ma10"].iloc[-1]
+    ma20 = df["ma20"].iloc[-1]
+
+    price = df["Close"].iloc[-1]
+
+    month_up = df["ma20"].iloc[-1] > df["ma20"].iloc[-5]
+    vol_ok = df["Volume"].iloc[-1] > df["vol_ma5"].iloc[-1]
+
+    return (
         month_up
         and price > ma20
         and s >= 6
         and ma5 > ma10 > ma20
+        and vol_ok
     )
-
-    # 第二池：趨勢形成
-    pool2 = (
-        month_up
-        and price > ma20
-        and s >= 4
-    )
-
-    if pool3:
-        return "🔴 第三池"
-
-    elif pool2:
-        return "🟠 第二池"
-
-    elif pool1:
-        return "🟡 第一池"
-
-    return None
 
 
 # =========================
@@ -147,49 +151,36 @@ def trade_levels(price, ma5, ma10, pool):
     entry = price
 
     if pool == "🔴 第三池":
-
         stop = ma10
         target = price * 1.25
 
     elif pool == "🟠 第二池":
-
         stop = ma5
         target = price * 1.20
 
     else:
-
         stop = ma5
         target = price * 1.12
 
-    return (
-        round(entry, 2),
-        round(stop, 2),
-        round(target, 2)
-    )
-    # =========================
+    return round(entry, 2), round(stop, 2), round(target, 2)
+
+
+# =========================
 # 🚀 盤後選股
 # =========================
 if st.button("🚀 盤後選股"):
 
     results = []
-
     batch_size = 200
 
-    total_batches = (
-        len(tickers) + batch_size - 1
-    ) // batch_size
-
+    total_batches = (len(tickers) + batch_size - 1) // batch_size
     progress = st.progress(0)
 
     for i in range(total_batches):
 
-        batch = tickers[
-            i * batch_size:
-            (i + 1) * batch_size
-        ]
+        batch = tickers[i * batch_size:(i + 1) * batch_size]
 
         try:
-
             data = yf.download(
                 tickers=batch,
                 period="3mo",
@@ -202,7 +193,6 @@ if st.button("🚀 盤後選股"):
             for t in batch:
 
                 try:
-
                     df = data[t]
 
                     if df.empty or len(df) < 30:
@@ -211,40 +201,16 @@ if st.button("🚀 盤後選股"):
                     df = add_indicators(df)
 
                     price = df["Close"].iloc[-1]
-
                     open_price = df["Open"].iloc[-1]
 
                     ma5 = df["ma5"].iloc[-1]
                     ma10 = df["ma10"].iloc[-1]
                     ma20 = df["ma20"].iloc[-1]
 
-                    prev_close = df["Close"].iloc[-2]
-                    prev_ma5 = df["ma5"].iloc[-2]
-
                     if pd.isna(ma20):
                         continue
 
-                    # =====================
-                    # 月線向上
-                    # =====================
-                    month_up = (
-                        ma20 >
-                        df["ma20"].iloc[-3]
-                    )
-
-                    if not month_up:
-                        continue
-
-                    # =====================
-                    # 股價站上月線
-                    # =====================
-                    if price <= ma20:
-                        continue
-
-                    change_pct = (
-                        df["Close"].iloc[-1]
-                        - df["Close"].iloc[-2]
-                    ) / df["Close"].iloc[-2]
+                    change_pct = (df["Close"].iloc[-1] - df["Close"].iloc[-2]) / df["Close"].iloc[-2]
 
                     s = score(
                         price,
@@ -256,56 +222,30 @@ if st.button("🚀 盤後選股"):
                         change_pct
                     )
 
-                    pool = classify_pool(
-                        s,
-                        price,
-                        open_price,
-                        ma5,
-                        ma10,
-                        ma20,
-                        prev_close,
-                        prev_ma5,
-                        month_up
-                    )
-
-                    if pool is None:
+                    # =====================
+                    # 三池分類（修正版）
+                    # =====================
+                    if is_pool3(df, s):
+                        pool = "🔴 第三池"
+                    elif is_pool2(df, s):
+                        pool = "🟠 第二池"
+                    elif is_pool1(df):
+                        pool = "🟡 第一池"
+                    else:
                         continue
 
-                    entry, stop, target = trade_levels(
-                        price,
-                        ma5,
-                        ma10,
-                        pool
-                    )
+                    entry, stop, target = trade_levels(price, ma5, ma10, pool)
 
                     results.append({
-
-                        "代號":
-                            ticker_map[t]["code"],
-
-                        "名稱":
-                            ticker_map[t]["name"],
-
-                        "ticker":
-                            t,
-
-                        "分數":
-                            s,
-
-                        "池別":
-                            pool,
-
-                        "收盤":
-                            round(price, 2),
-
-                        "進場價":
-                            entry,
-
-                        "停損價":
-                            stop,
-
-                        "目標價":
-                            target
+                        "代號": ticker_map[t]["code"],
+                        "名稱": ticker_map[t]["name"],
+                        "ticker": t,
+                        "分數": s,
+                        "池別": pool,
+                        "收盤": round(price, 2),
+                        "進場價": entry,
+                        "停損價": stop,
+                        "目標價": target
                     })
 
                 except:
@@ -314,64 +254,31 @@ if st.button("🚀 盤後選股"):
         except:
             continue
 
-        progress.progress(
-            (i + 1) / total_batches
-        )
+        progress.progress((i + 1) / total_batches)
 
     df = pd.DataFrame(results)
 
-    if len(df) == 0:
-
+    if df.empty:
         st.warning("沒有符合條件股票")
-
     else:
 
-        df["rank"] = df["分數"]
+        df = df.sort_values("分數", ascending=False)
 
-        df = df.sort_values(
-            "rank",
-            ascending=False
-        )
-
-        st.subheader("🏆 Top 20 排名")
-
-        st.dataframe(
-            df.head(20),
-            use_container_width=True
-        )
+        st.subheader("🏆 Top 20")
+        st.dataframe(df.head(20), use_container_width=True)
 
         st.subheader("🔴 第三池")
-
-        st.dataframe(
-            df[df["池別"] == "🔴 第三池"]
-            .head(10)
-        )
+        st.dataframe(df[df["池別"] == "🔴 第三池"].head(10))
 
         st.subheader("🟠 第二池")
-
-        st.dataframe(
-            df[df["池別"] == "🟠 第二池"]
-            .head(10)
-        )
+        st.dataframe(df[df["池別"] == "🟠 第二池"].head(10))
 
         st.subheader("🟡 第一池")
+        st.dataframe(df[df["池別"] == "🟡 第一池"].head(10))
 
-        st.dataframe(
-            df[df["池別"] == "🟡 第一池"]
-            .head(10)
-        )
-
-        st.session_state["pool1"] = (
-            df[df["池別"] == "🟡 第一池"]
-        )
-
-        st.session_state["pool2"] = (
-            df[df["池別"] == "🟠 第二池"]
-        )
-
-        st.session_state["pool3"] = (
-            df[df["池別"] == "🔴 第三池"]
-        )
+        st.session_state["pool1"] = df[df["池別"] == "🟡 第一池"]
+        st.session_state["pool2"] = df[df["池別"] == "🟠 第二池"]
+        st.session_state["pool3"] = df[df["池別"] == "🔴 第三池"]
         # =========================
 # 📈 盤中監控
 # =========================
@@ -385,7 +292,6 @@ def run_monitor(df):
     for _, row in df.iterrows():
 
         try:
-
             t = row["ticker"]
 
             data = yf.download(
@@ -404,91 +310,44 @@ def run_monitor(df):
             open_now = data["Open"].iloc[-1]
             close_now = close.iloc[-1]
 
-            close_y = close.iloc[-2]
-
             ma5 = close.rolling(5).mean().iloc[-1]
 
             high_5 = data["High"].iloc[-6:-1].max()
 
             vol_today = volume.iloc[-1]
-
-            vol_avg = (
-                volume
-                .rolling(5)
-                .mean()
-                .iloc[-1]
-            )
+            vol_avg = volume.rolling(5).mean().iloc[-1]
 
             # =====================
-            # 條件判斷
+            # 條件
             # =====================
 
             red_k = close_now > open_now
-
             above_ma5 = close_now > ma5
-
-            vol_ok = (
-                vol_today >
-                vol_avg * 0.8
-            )
-
-            breakout = (
-                close_now >
-                high_5
-            )
+            vol_ok = vol_today > vol_avg * 0.8
+            breakout = close_now > high_5
 
             # =====================
             # 訊號
             # =====================
 
-            if (
-                red_k
-                and above_ma5
-                and vol_ok
-                and breakout
-            ):
+            if red_k and above_ma5 and vol_ok and breakout:
                 signal = "🟢 強力BUY"
-
-            elif (
-                red_k
-                and above_ma5
-            ):
+            elif red_k and above_ma5:
                 signal = "🟡 WATCH"
-
             else:
                 signal = "🔴 NO"
 
             live.append({
-
-                "代號":
-                    row["代號"],
-
-                "名稱":
-                    row["名稱"],
-
-                "池別":
-                    row["池別"],
-
-                "收盤":
-                    round(close_now, 2),
-
-                "MA5":
-                    round(ma5, 2),
-
-                "紅K":
-                    "✅" if red_k else "❌",
-
-                "站上MA5":
-                    "✅" if above_ma5 else "❌",
-
-                "量能":
-                    "✅" if vol_ok else "❌",
-
-                "突破":
-                    "✅" if breakout else "❌",
-
-                "訊號":
-                    signal
+                "代號": row["代號"],
+                "名稱": row["名稱"],
+                "池別": row["池別"],
+                "收盤": round(close_now, 2),
+                "MA5": round(ma5, 2),
+                "紅K": "✅" if red_k else "❌",
+                "站上MA5": "✅" if above_ma5 else "❌",
+                "量能": "✅" if vol_ok else "❌",
+                "突破": "✅" if breakout else "❌",
+                "訊號": signal
             })
 
         except:
@@ -497,86 +356,42 @@ def run_monitor(df):
     return pd.DataFrame(live)
 
 
+# =========================
+# 🔄 更新盤中監控
+# =========================
 if st.button("🔄 更新盤中監控"):
 
     if "pool1" not in st.session_state:
-
-        st.warning("請先盤後選股")
-
+        st.warning("請先執行盤後選股")
         st.stop()
 
     col1, col2, col3 = st.columns(3)
 
     with col1:
-
-        st.markdown(
-            "### 🟡 第一池（尾盤重點）"
-        )
-
-        p1 = run_monitor(
-            st.session_state["pool1"]
-        )
-
-        st.dataframe(
-            p1,
-            use_container_width=True
-        )
+        st.markdown("### 🟡 第一池")
+        p1 = run_monitor(st.session_state["pool1"])
+        st.dataframe(p1, use_container_width=True)
 
     with col2:
-
-        st.markdown(
-            "### 🟠 第二池"
-        )
-
-        p2 = run_monitor(
-            st.session_state["pool2"]
-        )
-
-        st.dataframe(
-            p2,
-            use_container_width=True
-        )
+        st.markdown("### 🟠 第二池")
+        p2 = run_monitor(st.session_state["pool2"])
+        st.dataframe(p2, use_container_width=True)
 
     with col3:
-
-        st.markdown(
-            "### 🔴 第三池"
-        )
-
-        p3 = run_monitor(
-            st.session_state["pool3"]
-        )
-
-        st.dataframe(
-            p3,
-            use_container_width=True
-        )
+        st.markdown("### 🔴 第三池")
+        p3 = run_monitor(st.session_state["pool3"])
+        st.dataframe(p3, use_container_width=True)
 
     # =====================
-    # 尾盤候選股
+    # 🔥 尾盤優先名單
     # =====================
-
-    st.subheader(
-        "🔥 尾盤優先觀察名單"
-    )
+    st.subheader("🔥 尾盤優先觀察名單")
 
     try:
+        buy_list = pd.concat([p1, p2, p3])
+        buy_list = buy_list[buy_list["訊號"] == "🟢 強力BUY"]
 
-        buy_list = pd.concat(
-            [p1, p2, p3]
-        )
-
-        buy_list = buy_list[
-            buy_list["訊號"]
-            == "🟢 強力BUY"
-        ]
-
-        st.dataframe(
-            buy_list,
-            use_container_width=True
-        )
+        st.dataframe(buy_list, use_container_width=True)
 
     except:
-
         pass
-        
