@@ -272,9 +272,9 @@ if "breakout" in st.session_state:
     sel_ticker = pool_all[pool_all["代號"] == sel_code]["ticker"].values[0]
     sel_name = pool_all[pool_all["代號"] == sel_code]["名稱"].values[0]
     
-    # 【已修改】自動計算包含今天在內，往前推 3 個月（90天）的日期範圍
+    # 自動計算包含今天在內，往前推 3 個月（90天）的日期範圍，多推20天以利MA線正常計算開頭
     end_date = datetime.date.today()
-    start_date = end_date - datetime.timedelta(days=90)
+    start_date = end_date - datetime.timedelta(days=120)
 
     try:
         with st.spinner(f'正在分析 {sel_code} {sel_name} 最近 3 個月的轉折波浪軌跡...'):
@@ -284,13 +284,55 @@ if "breakout" in st.session_state:
             if isinstance(df_k.columns, pd.MultiIndex):
                 df_k.columns = df_k.columns.get_level_values(0)
 
+            # 計算各均線
             df_k['5MA'] = df_k['Close'].rolling(window=5).mean()
-            df_k['Close'] = pd.to_numeric(df_k['Close'].iloc[:, 0] if isinstance(df_k['Close'], pd.DataFrame) else df_k['Close'], errors='coerce')
-            df_k['High'] = pd.to_numeric(df_k['High'].iloc[:, 0] if isinstance(df_k['High'], pd.DataFrame) else df_k['High'], errors='coerce')
-            df_k['Low'] = pd.to_numeric(df_k['Low'].iloc[:, 0] if isinstance(df_k['Low'], pd.DataFrame) else df_k['Low'], errors='coerce')
-            df_k['5MA'] = pd.to_numeric(df_k['5MA'], errors='coerce')
-            df_k = df_k.dropna(subset=['Close', '5MA']).copy()
+            df_k['10MA'] = df_k['Close'].rolling(window=10).mean()
+            df_k['20MA'] = df_k['Close'].rolling(window=20).mean()
+            
+            # 型態轉換確保數值安全
+            for col in ['Close', 'High', 'Low', '5MA', '10MA', '20MA']:
+                df_k[col] = pd.to_numeric(df_k[col].iloc[:, 0] if isinstance(df_k[col], pd.DataFrame) else df_k[col], errors='coerce')
+            
+            # 刪除無均線資料的初始列，並裁切回最近90天
+            df_k = df_k.dropna(subset=['Close', '5MA', '10MA', '20MA']).copy()
+            df_k = df_k.iloc[-90:]
 
+            # =========================================================================
+            # ✨ 新增：動態大字體均線資訊看板（仿照圖片樣式帶有箭頭符號）
+            # =========================================================================
+            if len(df_k) >= 2:
+                last_row = df_k.iloc[-1]
+                prev_row = df_k.iloc[-2]
+                
+                # 判定 5MA, 10MA, 20MA 今日對比昨日是漲還是跌
+                arrow_5 = "▲" if last_row['5MA'] >= prev_row['5MA'] else "▼"
+                arrow_10 = "▲" if last_row['10MA'] >= prev_row['10MA'] else "▼"
+                arrow_20 = "▲" if last_row['20MA'] >= prev_row['20MA'] else "▼"
+                
+                # 計算漲跌顏色 (仿照一般股市，漲紅跌綠)
+                c_5 = "#FF4B4B" if arrow_5 == "▲" else "#008000"
+                c_10 = "#FF4B4B" if arrow_10 == "▲" else "#008000"
+                c_20 = "#FF4B4B" if arrow_20 == "▲" else "#008000"
+                
+                # 用 HTML 渲染亮眼的均線數據排版
+                st.markdown(
+                    f"""
+                    <div style="background-color: #F8F9FA; padding: 15px; border-left: 5px solid #4A5568; border-radius: 4px; margin-bottom: 15px; font-family: monospace;">
+                        <span style="color: #ED8936; font-size: 22px; font-weight: bold; margin-right: 25px;">
+                            5MA: {last_row['5MA']:.2f} <span style="color: {c_5}; font-size: 16px;">{arrow_5}</span>
+                        </span>
+                        <span style="color: #3182CE; font-size: 22px; font-weight: bold; margin-right: 25px;">
+                            10MA: {last_row['10MA']:.2f} <span style="color: {c_10}; font-size: 16px;">{arrow_10}</span>
+                        </span>
+                        <span style="color: #9F7AEA; font-size: 22px; font-weight: bold;">
+                            20MA: {last_row['20MA']:.2f} <span style="color: {c_20}; font-size: 16px;">{arrow_20}</span>
+                        </span>
+                    </div>
+                    """, 
+                    unsafe_allow_html=True
+                )
+
+            # 轉折軌跡波浪計算
             df_k['State'] = np.where(df_k['Close'] > df_k['5MA'], 1, -1)
             df_k['State_Group'] = (df_k['State'] != df_k['State'].shift()).cumsum()
 
@@ -322,9 +364,16 @@ if "breakout" in st.session_state:
                     df_k.loc[lowest_idx, 'Label_Text'] = "B"
                     df_k.loc[lowest_idx, 'Label_Pos'] = y_pos * 0.985
 
+            # 圖表美化樣式設定
             mc = mpf.make_marketcolors(up='red', down='green', edge='inherit', wick='inherit', volume='in')
             s = mpf.make_mpf_style(marketcolors=mc, gridstyle='--')
-            plots = [mpf.make_addplot(df_k['5MA'], color='orange', width=1.2, label='5MA')]
+            
+            # ✨ 新增：在畫面上同時繪製 5MA、10MA、20MA 的線條
+            plots = [
+                mpf.make_addplot(df_k['5MA'], color='orange', width=1.2, label='5MA'),
+                mpf.make_addplot(df_k['10MA'], color='blue', width=1.2, label='10MA'),
+                mpf.make_addplot(df_k['20MA'], color='purple', width=1.2, label='20MA')
+            ]
 
             fig, axlist = mpf.plot(
                 df_k, type='candle', style=s, addplot=plots, 
@@ -332,10 +381,12 @@ if "breakout" in st.session_state:
             )
             main_ax = axlist[0]
 
+            # 繪製轉折連線
             if len(zigzag_points) > 1:
                 x_coords, y_coords = zip(*zigzag_points)
                 main_ax.plot(x_coords, y_coords, color='#666666', linestyle='-', linewidth=2.5, zorder=3)
 
+            # 標記高低轉折點 (H / B)
             for idx, row in df_k[df_k['Label_Text'] != ""].iterrows():
                 x_pos = df_k.index.get_loc(idx)
                 color = 'red' if row['Label_Text'] == "H" else 'green'
