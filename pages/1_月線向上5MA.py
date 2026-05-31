@@ -66,7 +66,7 @@ def score(price, ma5, ma10, ma20, vol, vol_ma5, change_pct):
 
 
 # =========================
-# 四池分類（穩定版）
+# 四池分類
 # =========================
 def classify_pool(s, df, price, ma5, ma10, ma20, open_price):
 
@@ -74,22 +74,30 @@ def classify_pool(s, df, price, ma5, ma10, ma20, open_price):
         return None
 
     ma20_series = df["ma20"].dropna()
-
     if len(ma20_series) < 5:
         return None
 
-    # 趨勢
-    month_up = ma20_series.iloc[-1] > ma20_series.iloc[-min(5, len(ma20_series))]
-    above_ma20 = price > ma20
+    # =========================
+    # 🟡 第一池（新版本）
+    # =========================
 
-    # 🟡 第一池（已修改）
-    dipped = (df["Close"].tail(15) < df["ma5"].tail(15)).any()
+    # MA20 不下彎（近5天平均上升）
+    ma20_up = df["ma20"].iloc[-1] >= df["ma20"].iloc[-5]
+
+    # 15日內曾跌破 MA5
+    washed = (df["Close"].tail(15) < df["ma5"].tail(15)).any()
+
+    # 最新站回 MA5
     reclaim_ma5 = price > ma5
+
+    # 紅K
     red_k = price > open_price
 
-    pool1 = month_up and above_ma20 and dipped and reclaim_ma5 and red_k
+    pool1 = ma20_up and washed and reclaim_ma5 and red_k
 
     # 🟠 第二池
+    month_up = ma20_series.iloc[-1] > ma20_series.iloc[-min(5, len(ma20_series))]
+    above_ma20 = price > ma20
     pool2 = month_up and above_ma20 and s >= 4
 
     # 🔵 第三池
@@ -98,7 +106,6 @@ def classify_pool(s, df, price, ma5, ma10, ma20, open_price):
     # 🔴 第四池
     accel = df["Close"].pct_change().tail(3).mean() > 0
     vol_break = df["Volume"].iloc[-1] > df["vol_ma5"].iloc[-1]
-
     pool4 = month_up and above_ma20 and (ma5 > ma10 > ma20) and s >= 6 and accel and vol_break
 
     if pool4:
@@ -241,92 +248,3 @@ if st.button("🚀 盤後選股"):
         st.session_state["pool2"] = df[df["池別"] == "🟠 第二池"]
         st.session_state["pool3"] = df[df["池別"] == "🔵 第三池"]
         st.session_state["pool4"] = df[df["池別"] == "🔴 第四池"]
-
-
-# =========================
-# 📈 盤中監控
-# =========================
-st.subheader("📈 盤中監控")
-
-
-def run_monitor(df):
-
-    live = []
-
-    for _, row in df.iterrows():
-
-        try:
-            t = row["ticker"]
-
-            data = yf.download(t, period="10d", interval="1d", progress=False)
-
-            if data is None or len(data) < 6:
-                continue
-
-            close = data["Close"]
-            volume = data["Volume"]
-
-            open_now = data["Open"].iloc[-1]
-            close_now = close.iloc[-1]
-
-            ma5 = close.rolling(5).mean().iloc[-1]
-
-            high_5 = data["High"].iloc[-6:-1].max()
-
-            vol_today = volume.iloc[-1]
-            vol_avg = volume.rolling(5).mean().iloc[-1]
-
-            red_k = close_now > open_now
-            above_ma5 = close_now > ma5
-            breakout = close_now > high_5
-            vol_ok = vol_today > vol_avg
-
-            if red_k and above_ma5 and vol_ok and breakout:
-                signal = "🟢 強力BUY"
-            elif red_k and above_ma5:
-                signal = "🟡 WATCH"
-            else:
-                signal = "🔴 NO"
-
-            live.append({
-                "代號": row["代號"],
-                "名稱": row["名稱"],
-                "池別": row["池別"],
-                "收盤": round(close_now, 2),
-                "MA5": round(ma5, 2),
-                "紅K": "✅" if red_k else "❌",
-                "站上MA5": "✅" if above_ma5 else "❌",
-                "量能": "✅" if vol_ok else "❌",
-                "突破": "✅" if breakout else "❌",
-                "訊號": signal
-            })
-
-        except:
-            continue
-
-    return pd.DataFrame(live)
-
-
-if st.button("🔄 更新盤中監控"):
-
-    if "pool1" not in st.session_state:
-        st.warning("請先執行盤後選股")
-        st.stop()
-
-    col1, col2, col3, col4 = st.columns(4)
-
-    with col1:
-        st.markdown("### 🟡 第一池")
-        st.dataframe(run_monitor(st.session_state["pool1"]))
-
-    with col2:
-        st.markdown("### 🟠 第二池")
-        st.dataframe(run_monitor(st.session_state["pool2"]))
-
-    with col3:
-        st.markdown("### 🔵 第三池")
-        st.dataframe(run_monitor(st.session_state["pool3"]))
-
-    with col4:
-        st.markdown("### 🔴 第四池")
-        st.dataframe(run_monitor(st.session_state["pool4"]))
