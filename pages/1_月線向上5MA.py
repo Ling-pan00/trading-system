@@ -90,9 +90,18 @@ def classify_pool(s, df, price, ma5, ma10, ma20, open_price):
 
     # 紅K
     red_k = price > open_price
+# 🟡 第一池（回檔轉強：不限制時間）
+dipped = (df["Low"] < df["ma5"]).any()   # 曾經有回檔（不管哪一天）
 
-    # 🟡 第一池（回檔轉強）
-    pool1 = month_up and above_ma20 and dipped and reclaim_ma5 and red_k
+reclaim_ma5 = price > ma5                # 現在站回 MA5
+
+pool1 = (
+    month_up
+    and above_ma20
+    and dipped
+    and reclaim_ma5
+)
+    
 
     # 🟠 第二池（趨勢形成）
     pool2 = month_up and above_ma20 and s >= 4
