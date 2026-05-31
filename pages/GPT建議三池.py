@@ -149,7 +149,7 @@ if st.button("🚀 盤後選股"):
 
     status.text("✅ 完成")
 
-    if results:
+    if Fly := results:
         df = pd.DataFrame(results)
         st.session_state["breakout"] = df[df["池別"] == "🚀 突破股"].sort_values("分數", ascending=False).head(5)
         st.session_state["momentum"] = df[df["池別"] == "🟡 動能股"].sort_values("分數", ascending=False).head(5)
@@ -297,24 +297,19 @@ if "breakout" in st.session_state:
             df_k = df_k.dropna(subset=['Close', '5MA', '10MA', '20MA']).copy()
             df_k = df_k.iloc[-90:]
 
-            # =========================================================================
-            # ✨ 新增：動態大字體均線資訊看板（仿照圖片樣式帶有箭頭符號）
-            # =========================================================================
+            # 動態大字體均線資訊看板（仿照圖片樣式帶有箭頭符號）
             if len(df_k) >= 2:
                 last_row = df_k.iloc[-1]
                 prev_row = df_k.iloc[-2]
                 
-                # 判定 5MA, 10MA, 20MA 今日對比昨日是漲還是跌
                 arrow_5 = "▲" if last_row['5MA'] >= prev_row['5MA'] else "▼"
                 arrow_10 = "▲" if last_row['10MA'] >= prev_row['10MA'] else "▼"
                 arrow_20 = "▲" if last_row['20MA'] >= prev_row['20MA'] else "▼"
                 
-                # 計算漲跌顏色 (仿照一般股市，漲紅跌綠)
                 c_5 = "#FF4B4B" if arrow_5 == "▲" else "#008000"
                 c_10 = "#FF4B4B" if arrow_10 == "▲" else "#008000"
                 c_20 = "#FF4B4B" if arrow_20 == "▲" else "#008000"
                 
-                # 用 HTML 渲染亮眼的均線數據排版
                 st.markdown(
                     f"""
                     <div style="background-color: #F8F9FA; padding: 15px; border-left: 5px solid #4A5568; border-radius: 4px; margin-bottom: 15px; font-family: monospace;">
@@ -343,6 +338,8 @@ if "breakout" in st.session_state:
             grouped_k = df_k.groupby('State_Group')
             group_ids_k = sorted(df_k['State_Group'].unique())
 
+            # 用於動態貼近點位的天線/腳線比例修正常數
+            # 💡 已修改：大幅縮小乘數（1.015 -> 1.002 ; 0.985 -> 0.998）使 H 和 B 直接緊貼高低點
             for g_id in group_ids_k:
                 group_data = grouped_k.get_group(g_id)
                 state = group_data['State'].iloc[0]
@@ -355,20 +352,19 @@ if "breakout" in st.session_state:
                     y_pos = df_k.loc[highest_idx, 'High']
                     zigzag_points.append((x_pos, y_pos))
                     df_k.loc[highest_idx, 'Label_Text'] = "H"
-                    df_k.loc[highest_idx, 'Label_Pos'] = y_pos * 1.015
+                    df_k.loc[highest_idx, 'Label_Pos'] = y_pos * 1.002
                 elif state == -1:
                     lowest_idx = group_data['Low'].idxmin()
                     x_pos = df_k.index.get_loc(lowest_idx)
                     y_pos = df_k.loc[lowest_idx, 'Low']
                     zigzag_points.append((x_pos, y_pos))
                     df_k.loc[lowest_idx, 'Label_Text'] = "B"
-                    df_k.loc[lowest_idx, 'Label_Pos'] = y_pos * 0.985
+                    df_k.loc[lowest_idx, 'Label_Pos'] = y_pos * 0.998
 
             # 圖表美化樣式設定
             mc = mpf.make_marketcolors(up='red', down='green', edge='inherit', wick='inherit', volume='in')
             s = mpf.make_mpf_style(marketcolors=mc, gridstyle='--')
             
-            # ✨ 新增：在畫面上同時繪製 5MA、10MA、20MA 的線條
             plots = [
                 mpf.make_addplot(df_k['5MA'], color='orange', width=1.2, label='5MA'),
                 mpf.make_addplot(df_k['10MA'], color='blue', width=1.2, label='10MA'),
@@ -386,14 +382,20 @@ if "breakout" in st.session_state:
                 x_coords, y_coords = zip(*zigzag_points)
                 main_ax.plot(x_coords, y_coords, color='#666666', linestyle='-', linewidth=2.5, zorder=3)
 
-            # 標記高低轉折點 (H / B)
+            # 標記高低轉折點 (H / B) — 加上 va (垂直對齊調整) 來做進一步貼近
             for idx, row in df_k[df_k['Label_Text'] != ""].iterrows():
                 x_pos = df_k.index.get_loc(idx)
-                color = 'red' if row['Label_Text'] == "H" else 'green'
+                if row['Label_Text'] == "H":
+                    color = 'red'
+                    va_dir = 'bottom'  # 緊貼在最高點上緣
+                else:
+                    color = 'green'
+                    va_dir = 'top'     # 緊貼在最低點下緣
+                    
                 main_ax.text(
                     x_pos, row['Label_Pos'], row['Label_Text'], 
-                    color=color, fontsize=9, weight='bold', ha='center', va='center', zorder=5,
-                    bbox=dict(boxstyle="round,pad=0.2", fc="#FFFFCC", alpha=0.9, ec=color, lw=1)
+                    color=color, fontsize=9, weight='bold', ha='center', va=va_dir, zorder=5,
+                    bbox=dict(boxstyle="round,pad=0.15", fc="#FFFFCC", alpha=0.9, ec=color, lw=1)
                 )
 
             st.pyplot(fig)
