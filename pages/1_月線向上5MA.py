@@ -82,8 +82,8 @@ def classify_pool(s, df, price, ma5, ma10, ma20, open_price):
     month_up = ma20_series.iloc[-1] > ma20_series.iloc[-min(5, len(ma20_series))]
     above_ma20 = price > ma20
 
-    # 🟡 第一池
-    dipped = (df["Close"] < df["ma5"]).any()
+    # 🟡 第一池（已修改）
+    dipped = (df["Close"].tail(15) < df["ma5"].tail(15)).any()
     reclaim_ma5 = price > ma5
     red_k = price > open_price
 
