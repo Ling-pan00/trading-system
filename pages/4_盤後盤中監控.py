@@ -3,9 +3,9 @@ import pandas as pd
 import yfinance as yf
 import twstock
 
-st.set_page_config(page_title="三池交易看板 Pro", layout="wide")
+st.set_page_config(page_title="三池獨立監控系統", layout="wide")
 
-st.title("📊 三池交易看板（完整版本）")
+st.title("📊 三池獨立交易監控系統 Pro")
 
 # =========================
 # 股票池
@@ -28,15 +28,14 @@ def get_stock_list():
 
 
 stock_list = get_stock_list()
-
 ticker_map = {s["ticker"]: s for s in stock_list}
 tickers = list(ticker_map.keys())
 
-st.write(f"📦 股票數量：{len(tickers)}")
+st.write(f"📦 股票數：{len(tickers)}")
 
 
 # =========================
-# 評分系統
+# 評分
 # =========================
 def score(close, ma5, ma10, ma20, vol, vol_ma5, change_pct):
 
@@ -57,20 +56,20 @@ def score(close, ma5, ma10, ma20, vol, vol_ma5, change_pct):
 
 
 # =========================
-# 三池分類（核心恢復）
+# 三池分類
 # =========================
-def classify_pool(s):
+def classify_pool(score):
 
-    if s >= 5:
+    if score >= 5:
         return "🚀 突破股"
-    elif s >= 3:
+    elif score >= 3:
         return "🟡 動能股"
     else:
         return "🧊 回檔股"
 
 
 # =========================
-# 盤中訊號
+# 盤中訊號（不變）
 # =========================
 def intraday_signal(open_p, close_y, low_y, high_y, vol, vol_y):
 
@@ -107,7 +106,7 @@ if st.button("🚀 盤後選股"):
 
         batch = tickers[i*batch_size:(i+1)*batch_size]
 
-        status.text(f"📥 批次 {i+1}/{total_batches}")
+        status.text(f"📥 {i+1}/{total_batches}")
 
         try:
             data = yf.download(
@@ -174,48 +173,41 @@ if st.button("🚀 盤後選股"):
     df = pd.DataFrame(results)
 
     # =========================
-    # 三池 Top5（核心恢復）
+    # 🚀 三池獨立 Top5（核心）
     # =========================
-    breakout = df[df["池別"] == "🚀 突破股"].sort_values("分數", ascending=False).head(5)
-    momentum = df[df["池別"] == "🟡 動能股"].sort_values("分數", ascending=False).head(5)
-    pullback = df[df["池別"] == "🧊 回檔股"].sort_values("分數", ascending=False).head(5)
+    breakout_df = df[df["池別"] == "🚀 突破股"].sort_values("分數", ascending=False).head(5)
+    momentum_df = df[df["池別"] == "🟡 動能股"].sort_values("分數", ascending=False).head(5)
+    pullback_df = df[df["池別"] == "🧊 回檔股"].sort_values("分數", ascending=False).head(5)
+
+    # 存 session
+    st.session_state["breakout"] = breakout_df
+    st.session_state["momentum"] = momentum_df
+    st.session_state["pullback"] = pullback_df
+
 
     # =========================
-    # 合併候選（5~10檔）
+    # UI（交易看板）
     # =========================
-    candidates = pd.concat([breakout, momentum, pullback]).sort_values("分數", ascending=False).head(10)
+    st.subheader("🚀 突破股 Top5")
+    st.dataframe(breakout_df, use_container_width=True)
 
-    st.subheader("🚀 突破股 Top 5")
-    st.dataframe(breakout, use_container_width=True)
+    st.subheader("🟡 動能股 Top5")
+    st.dataframe(momentum_df, use_container_width=True)
 
-    st.subheader("🟡 動能股 Top 5")
-    st.dataframe(momentum, use_container_width=True)
-
-    st.subheader("🧊 回檔股 Top 5")
-    st.dataframe(pullback, use_container_width=True)
-
-    st.subheader("📦 合併候選（5~10檔）")
-    st.dataframe(candidates, use_container_width=True)
-
-    st.session_state["candidates"] = candidates
+    st.subheader("🧊 回檔股 Top5")
+    st.dataframe(pullback_df, use_container_width=True)
 
 
 # =========================
-# 盤中監控（不變）
+# 盤中監控（獨立三池）
 # =========================
-st.subheader("📈 盤中監控")
+st.subheader("📈 盤中三池監控")
 
-if st.button("🔄 更新盤中訊號"):
-
-    if "candidates" not in st.session_state:
-        st.warning("請先盤後選股")
-        st.stop()
-
-    candidates = st.session_state["candidates"]
+def run_monitor(df):
 
     live = []
 
-    for _, row in candidates.iterrows():
+    for _, row in df.iterrows():
 
         try:
             t = row["ticker"]
@@ -256,4 +248,25 @@ if st.button("🔄 更新盤中訊號"):
         except:
             continue
 
-    st.dataframe(pd.DataFrame(live), use_container_width=True)
+    return pd.DataFrame(live)
+
+
+if st.button("🔄 更新盤中監控"):
+
+    if "breakout" not in st.session_state:
+        st.warning("請先盤後選股")
+        st.stop()
+
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        st.markdown("### 🚀 突破股監控")
+        st.dataframe(run_monitor(st.session_state["breakout"]), use_container_width=True)
+
+    with col2:
+        st.markdown("### 🟡 動能股監控")
+        st.dataframe(run_monitor(st.session_state["momentum"]), use_container_width=True)
+
+    with col3:
+        st.markdown("### 🧊 回檔股監控")
+        st.dataframe(run_monitor(st.session_state["pullback"]), use_container_width=True)
