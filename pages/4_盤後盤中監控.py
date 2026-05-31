@@ -3,9 +3,9 @@ import pandas as pd
 import yfinance as yf
 import twstock
 
-st.set_page_config(page_title="交易監控 UI Pro", layout="wide")
+st.set_page_config(page_title="三池交易看板 Pro", layout="wide")
 
-st.title("📊 交易監控系統 Pro（盤後 + 盤中）")
+st.title("📊 三池交易看板（完整版本）")
 
 # =========================
 # 股票池
@@ -26,16 +26,17 @@ def get_stock_list():
 
     return stocks
 
+
 stock_list = get_stock_list()
 
 ticker_map = {s["ticker"]: s for s in stock_list}
 tickers = list(ticker_map.keys())
 
-st.write(f"📦 股票池數量：{len(tickers)}")
+st.write(f"📦 股票數量：{len(tickers)}")
 
 
 # =========================
-# 評分
+# 評分系統
 # =========================
 def score(close, ma5, ma10, ma20, vol, vol_ma5, change_pct):
 
@@ -56,24 +57,22 @@ def score(close, ma5, ma10, ma20, vol, vol_ma5, change_pct):
 
 
 # =========================
-# 市場分型
+# 三池分類（核心恢復）
 # =========================
-def market_regime(df):
+def classify_pool(s):
 
-    avg_score = df["分數"].mean()
-
-    if avg_score >= 5:
-        return "🚀 強勢盤"
-    elif avg_score >= 3:
-        return "🟡 中性盤"
+    if s >= 5:
+        return "🚀 突破股"
+    elif s >= 3:
+        return "🟡 動能股"
     else:
-        return "🧊 防守盤"
+        return "🧊 回檔股"
 
 
 # =========================
 # 盤中訊號
 # =========================
-def signal(open_p, close_y, low_y, high_y, vol, vol_y):
+def intraday_signal(open_p, close_y, low_y, high_y, vol, vol_y):
 
     strong = open_p >= close_y
     hold = open_p >= low_y
@@ -94,7 +93,7 @@ def signal(open_p, close_y, low_y, high_y, vol, vol_y):
 # =========================
 # 盤後掃描
 # =========================
-if st.button("🚀 盤後選股（產生候選）"):
+if st.button("🚀 盤後選股"):
 
     results = []
 
@@ -108,7 +107,7 @@ if st.button("🚀 盤後選股（產生候選）"):
 
         batch = tickers[i*batch_size:(i+1)*batch_size]
 
-        status.text(f"📥 {i+1}/{total_batches}")
+        status.text(f"📥 批次 {i+1}/{total_batches}")
 
         try:
             data = yf.download(
@@ -151,11 +150,14 @@ if st.button("🚀 盤後選股（產生候選）"):
                         change_pct
                     )
 
+                    pool = classify_pool(s)
+
                     results.append({
                         "代號": ticker_map[t]["code"],
                         "名稱": ticker_map[t]["name"],
                         "ticker": t,
                         "分數": s,
+                        "池別": pool,
                         "收盤": float(close.iloc[-1])
                     })
 
@@ -167,26 +169,46 @@ if st.button("🚀 盤後選股（產生候選）"):
 
         progress.progress((i+1)/total_batches)
 
-    df = pd.DataFrame(results)
-    df = df.sort_values("分數", ascending=False)
+    status.text("✅ 完成")
 
-    candidates = df.head(10)
+    df = pd.DataFrame(results)
+
+    # =========================
+    # 三池 Top5（核心恢復）
+    # =========================
+    breakout = df[df["池別"] == "🚀 突破股"].sort_values("分數", ascending=False).head(5)
+    momentum = df[df["池別"] == "🟡 動能股"].sort_values("分數", ascending=False).head(5)
+    pullback = df[df["池別"] == "🧊 回檔股"].sort_values("分數", ascending=False).head(5)
+
+    # =========================
+    # 合併候選（5~10檔）
+    # =========================
+    candidates = pd.concat([breakout, momentum, pullback]).sort_values("分數", ascending=False).head(10)
+
+    st.subheader("🚀 突破股 Top 5")
+    st.dataframe(breakout, use_container_width=True)
+
+    st.subheader("🟡 動能股 Top 5")
+    st.dataframe(momentum, use_container_width=True)
+
+    st.subheader("🧊 回檔股 Top 5")
+    st.dataframe(pullback, use_container_width=True)
+
+    st.subheader("📦 合併候選（5~10檔）")
+    st.dataframe(candidates, use_container_width=True)
 
     st.session_state["candidates"] = candidates
 
-    st.subheader("📦 盤後候選股（5~10檔）")
-    st.dataframe(candidates, use_container_width=True)
-
 
 # =========================
-# 盤中監控
+# 盤中監控（不變）
 # =========================
-st.subheader("📈 盤中交易監控")
+st.subheader("📈 盤中監控")
 
 if st.button("🔄 更新盤中訊號"):
 
     if "candidates" not in st.session_state:
-        st.warning("請先做盤後選股")
+        st.warning("請先盤後選股")
         st.stop()
 
     candidates = st.session_state["candidates"]
@@ -214,11 +236,19 @@ if st.button("🔄 更新盤中訊號"):
             vol = volume.iloc[-1]
             vol_y = volume.rolling(5).mean().iloc[-1]
 
-            sig = signal(open_now, close_y, low_y, high_y, vol, vol_y)
+            sig = intraday_signal(
+                open_now,
+                close_y,
+                low_y,
+                high_y,
+                vol,
+                vol_y
+            )
 
             live.append({
                 "代號": row["代號"],
                 "名稱": row["名稱"],
+                "池別": row["池別"],
                 "分數": row["分數"],
                 "訊號": sig
             })
@@ -226,18 +256,4 @@ if st.button("🔄 更新盤中訊號"):
         except:
             continue
 
-    live_df = pd.DataFrame(live)
-
-    st.dataframe(live_df, use_container_width=True)
-
-    # =========================
-    # 今日結論
-    # =========================
-    buy_count = len(live_df[live_df["訊號"].str.contains("BUY")])
-
-    if buy_count >= 3:
-        st.success("🚀 今日偏多：可積極交易")
-    elif buy_count > 0:
-        st.info("🟡 今日偏觀察：小倉或選強")
-    else:
-        st.error("🔴 今日防守：不建議交易")
+    st.dataframe(pd.DataFrame(live), use_container_width=True)
