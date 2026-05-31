@@ -16,7 +16,7 @@ if not stock_code.endswith(".TW") and not stock_code.endswith(".TWO"):
 else:
     stock_id = stock_code
 
-# 設定查詢時間範圍 (縮短點範圍，畫面呈現會跟手機看盤軟體一樣清晰)
+# 設定查詢時間範圍 (縮短範圍讓K線大小剛好，像手機看盤一樣)
 start_date = "2025-11-01"
 end_date = "2026-05-30"
 
@@ -44,15 +44,15 @@ try:
         df['5MA'] = pd.to_numeric(df['5MA'], errors='coerce')
         df = df.dropna(subset=['Close', '5MA']).copy()
 
-        # 2. 定義狀態與群組 (依據 5MA 交叉動態切分波段)
+        # 2. 定義狀態與群組 (依據 5MA 交叉切分波段)
         df['State'] = np.where(df['Close'] > df['5MA'], 1, -1)
         df['State_Group'] = (df['State'] != df['State'].shift()).cumsum()
 
-        # 3. 找出每個區間的最高點(頭)與最低點(底)，並記錄它們的價格與時間位置
+        # 3. 初始化標註欄位
         df['Label_Text'] = ""
         df['Label_Pos'] = np.nan
         
-        # 用來存所有轉折點座標的清單，以便後面連線 [(時間索引數字, 價格), ...]
+        # 用來精確記錄「高低頂點」座標的清單
         zigzag_points = []
 
         grouped = df.groupby('State_Group')
@@ -61,47 +61,44 @@ try:
         for g_id in group_ids:
             group_data = grouped.get_group(g_id)
             state = group_data['State'].iloc[0]
-            current_group = g_id
             
-            # 跳過最前期的不完整波段，確保有足夠歷史資料回溯
-            if current_group <= 2:
+            # 排除前兩組不完整波段
+            if g_id <= 2:
                 continue
                 
             if state == 1:
-                # 【條件 1】站上 5MA：往前找上一個頭部區間(current_group - 2)的最低價
-                prev_head_zone = df[df['State_Group'] == (current_group - 2)]
-                if not prev_head_zone.empty:
-                    target_price = prev_head_zone['Low'].min()
-                    # 轉折點定在該波段的起點
-                    turn_date = group_data.index[0]
-                    x_pos = df.index.get_loc(turn_date)
-                    zigzag_points.append((x_pos, target_price))
-                    
-                    # 標記頭部最高點文字 H
-                    highest_idx = group_data['High'].idxmax()
-                    df.loc[highest_idx, 'Label_Text'] = "H"
-                    df.loc[highest_idx, 'Label_Pos'] = df.loc[highest_idx, 'High'] * 1.01
-                    
+                # 【狀況一：站上5MA波段】
+                # 這個波段的「頭」在當前群組的最高點
+                highest_idx = group_data['High'].idxmax()
+                x_pos = df.index.get_loc(highest_idx)
+                y_pos = df.loc[highest_idx, 'High']
+                
+                # 記錄轉折點 (連線至此群組最高點)
+                zigzag_points.append((x_pos, y_pos))
+                
+                # 標記 H
+                df.loc[highest_idx, 'Label_Text'] = "H"
+                df.loc[highest_idx, 'Label_Pos'] = y_pos * 1.015
+                
             elif state == -1:
-                # 【條件 2】跌破 5MA：往前找上一個底部區間(current_group - 2)的最高價
-                prev_bottom_zone = df[df['State_Group'] == (current_group - 2)]
-                if not prev_bottom_zone.empty:
-                    target_price = prev_bottom_zone['High'].max()
-                    # 轉折點定在該波段的起點
-                    turn_date = group_data.index[0]
-                    x_pos = df.index.get_loc(turn_date)
-                    zigzag_points.append((x_pos, target_price))
-                    
-                    # 標記底部最低點文字 B
-                    lowest_idx = group_data['Low'].idxmin()
-                    df.loc[lowest_idx, 'Label_Text'] = "B"
-                    df.loc[lowest_idx, 'Label_Pos'] = df.loc[lowest_idx, 'Low'] * 0.99
+                # 【狀況二：跌破5MA波段】
+                # 這個波段的「底」在當前群組的最低點
+                lowest_idx = group_data['Low'].idxmin()
+                x_pos = df.index.get_loc(lowest_idx)
+                y_pos = df.loc[lowest_idx, 'Low']
+                
+                # 記錄轉折點 (連線至此群組最低點)
+                zigzag_points.append((x_pos, y_pos))
+                
+                # 標記 B
+                df.loc[lowest_idx, 'Label_Text'] = "B"
+                df.loc[lowest_idx, 'Label_Pos'] = y_pos * 0.985
 
         # 4. 繪製圖表
         mc = mpf.make_marketcolors(up='red', down='green', edge='inherit', wick='inherit', volume='in')
         s = mpf.make_mpf_style(marketcolors=mc, gridstyle='--')
 
-        # 先把 5MA 橘線放進基礎圖層
+        # 橘色 5MA 線
         plots = [mpf.make_addplot(df['5MA'], color='orange', width=1.2, label='5MA')]
 
         fig, axlist = mpf.plot(
@@ -116,19 +113,19 @@ try:
         
         main_ax = axlist[0] # K線主圖畫布
 
-        # 5. 【關鍵繪圖】將所有轉折點依序連成一條連續不中斷的折線
+        # 5. 【關鍵修正】把高點 H 與 低點 B 嚴格地高低交叉連起來！
         if len(zigzag_points) > 1:
             x_coords, y_coords = zip(*zigzag_points)
-            # 畫出深灰色轉折折線 (如同你看盤軟體上的灰色劃線)
-            main_ax.plot(x_coords, y_coords, color='#555555', linestyle='-', linewidth=2.5, label='Wave Line', zorder=4)
+            # 繪製深灰色鋸齒轉折折線 (zorder=3 確保它穿過 K 線)
+            main_ax.plot(x_coords, y_coords, color='#666666', linestyle='-', linewidth=2.5, label='ZigZag Wave', zorder=3)
 
-        # 6. 在 K 線圖上標註 H (頭) 與 B (底) 的黃色圓角標籤
+        # 6. 標註 H 與 B 的黃色圓角標籤 (zorder=5 確保文字在最上層不被線遮擋)
         for idx, row in df[df['Label_Text'] != ""].iterrows():
             x_pos = df.index.get_loc(idx)
             color = 'red' if row['Label_Text'] == "H" else 'green'
             main_ax.text(
                 x_pos, row['Label_Pos'], row['Label_Text'], 
-                color=color, fontsize=9, weight='bold', ha='center', va='center',
+                color=color, fontsize=9, weight='bold', ha='center', va='center', zorder=5,
                 bbox=dict(boxstyle="round,pad=0.2", fc="#FFFFCC", alpha=0.9, ec=color, lw=1)
             )
 
