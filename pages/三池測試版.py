@@ -4,6 +4,7 @@ import yfinance as yf
 import mplfinance as mpf
 import numpy as np
 import twstock
+import datetime
 
 # 設定頁面為寬螢幕版面
 st.set_page_config(page_title="三池獨立監控系統", layout="wide")
@@ -65,7 +66,7 @@ def classify_pool(score):
 
 
 # =========================
-# 盤中訊號（不變）
+# 盤中訊號
 # =========================
 def intraday_signal(open_p, close_y, low_y, high_y, vol, vol_y):
     strong = open_p >= close_y
@@ -160,16 +161,50 @@ if st.button("🚀 盤後選股"):
         st.session_state["pullback"] = pullback_df
 
 
-# 顯示盤後選股結果 (若 Session 內有資料則持續保持顯示)
+# =========================================================================
+# 顯示盤後選股結果 (支援點擊表格列直接連動)
+# =========================================================================
+if "selected_ticker_from_table" not in st.session_state:
+    st.session_state["selected_ticker_from_table"] = None
+
 if "breakout" in st.session_state:
+    st.markdown("💡 **提示：直接用滑鼠點擊下方任何一個表格的「最左側勾選框」，即可立刻切換下方 K 線圖！**")
+    
+    # ---------------- 突破股表格 ----------------
     st.subheader("🚀 突破股 Top5")
-    st.dataframe(st.session_state["breakout"], use_container_width=True)
+    sel_breakout = st.dataframe(
+        st.session_state["breakout"], 
+        use_container_width=True,
+        on_select="rerun",
+        selection_mode="single_row"
+    )
+    if sel_breakout.selection.rows:
+        selected_row_idx = sel_breakout.selection.rows[0]
+        st.session_state["selected_ticker_from_table"] = st.session_state["breakout"].iloc[selected_row_idx]["ticker"]
 
+    # ---------------- 動能股表格 ----------------
     st.subheader("🟡 動能股 Top5")
-    st.dataframe(st.session_state["momentum"], use_container_width=True)
+    sel_momentum = st.dataframe(
+        st.session_state["momentum"], 
+        use_container_width=True,
+        on_select="rerun",
+        selection_mode="single_row"
+    )
+    if sel_momentum.selection.rows:
+        selected_row_idx = sel_momentum.selection.rows[0]
+        st.session_state["selected_ticker_from_table"] = st.session_state["momentum"].iloc[selected_row_idx]["ticker"]
 
+    # ---------------- 回檔股表格 ----------------
     st.subheader("🧊 回檔股 Top5")
-    st.dataframe(st.session_state["pullback"], use_container_width=True)
+    sel_pullback = st.dataframe(
+        st.session_state["pullback"], 
+        use_container_width=True,
+        on_select="rerun",
+        selection_mode="single_row"
+    )
+    if sel_pullback.selection.rows:
+        selected_row_idx = sel_pullback.selection.rows[0]
+        st.session_state["selected_ticker_from_table"] = st.session_state["pullback"].iloc[selected_row_idx]["ticker"]
 
 
 # =========================
@@ -230,45 +265,48 @@ if st.button("🔄 更新盤中監控"):
 
 
 # =========================================================================
-# 🎯 核心新功能：選股池連動轉折 K 線圖
+# 🎯 核心功能：選股池連動轉折 K 線圖 (自動動態鎖定「最近半年」)
 # =========================================================================
 st.write("---")
 st.subheader("🎯 智慧選股連動看盤監測器")
 
-# 檢查目前三大股票池是否有資料，並自動融合成一個下拉選單供使用者快速切換
 if "breakout" in st.session_state:
-    # 整合所有出現在 Top15 的股票
     pool_all = pd.concat([
         st.session_state["breakout"], 
         st.session_state["momentum"], 
         st.session_state["pullback"]
     ]).drop_duplicates(subset=['ticker'])
     
-    # 建立選單文字清單："代號 - 名稱 (池別)"
     options = [f"{row['代號']} - {row['名稱']} ({row['池別']})" for _, row in pool_all.iterrows()]
+    ticker_to_option_index = {row['ticker']: i for i, row in pool_all.iterrows()}
     
-    # 使用選單進行即時看圖連動
-    selected_option = st.selectbox("👉 請選取您想觀察的策略股，下方將立刻輸出轉折波段線：", options)
+    # 決定預選哪一檔股票
+    default_idx = 0
+    if st.session_state["selected_ticker_from_table"] in ticker_to_option_index:
+        default_idx = list(pool_all['ticker']).index(st.session_state["selected_ticker_from_table"])
+
+    selected_option = st.selectbox(
+        "👉 您也可以在此手動切換想觀察的策略股：", 
+        options, 
+        index=default_idx
+    )
     
-    # 拆解出 Ticker 代號
     sel_code = selected_option.split(" - ")[0]
     sel_ticker = pool_all[pool_all["代號"] == sel_code]["ticker"].values[0]
     sel_name = pool_all[pool_all["代號"] == sel_code]["名稱"].values[0]
     
-    # 畫圖範圍設定
-    start_date = "2025-11-01"
-    end_date = "2026-05-30"
+    # 【核心優化】：自動計算包含今天在內，往前推半年的日期範圍
+    end_date = datetime.date.today()
+    start_date = end_date - datetime.timedelta(days=180)
 
     try:
-        with st.spinner(f'正在分析 {sel_code} {sel_name} 的轉折波浪軌跡...'):
+        with st.spinner(f'正在分析 {sel_code} {sel_name} 最近半年的轉折波浪軌跡...'):
             df_k = yf.download(sel_ticker, start=start_date, end=end_date, progress=False)
             
         if not df_k.empty:
-            # 修正 yfinance 多重索引問題
             if isinstance(df_k.columns, pd.MultiIndex):
                 df_k.columns = df_k.columns.get_level_values(0)
 
-            # 1. 計算 5MA
             df_k['5MA'] = df_k['Close'].rolling(window=5).mean()
             df_k['Close'] = pd.to_numeric(df_k['Close'].iloc[:, 0] if isinstance(df_k['Close'], pd.DataFrame) else df_k['Close'], errors='coerce')
             df_k['High'] = pd.to_numeric(df_k['High'].iloc[:, 0] if isinstance(df_k['High'], pd.DataFrame) else df_k['High'], errors='coerce')
@@ -276,7 +314,6 @@ if "breakout" in st.session_state:
             df_k['5MA'] = pd.to_numeric(df_k['5MA'], errors='coerce')
             df_k = df_k.dropna(subset=['Close', '5MA']).copy()
 
-            # 2. 波段狀態切分
             df_k['State'] = np.where(df_k['Close'] > df_k['5MA'], 1, -1)
             df_k['State_Group'] = (df_k['State'] != df_k['State'].shift()).cumsum()
 
@@ -308,7 +345,6 @@ if "breakout" in st.session_state:
                     df_k.loc[lowest_idx, 'Label_Text'] = "B"
                     df_k.loc[lowest_idx, 'Label_Pos'] = y_pos * 0.985
 
-            # 3. 繪製圖表
             mc = mpf.make_marketcolors(up='red', down='green', edge='inherit', wick='inherit', volume='in')
             s = mpf.make_mpf_style(marketcolors=mc, gridstyle='--')
             plots = [mpf.make_addplot(df_k['5MA'], color='orange', width=1.2, label='5MA')]
@@ -319,12 +355,10 @@ if "breakout" in st.session_state:
             )
             main_ax = axlist[0]
 
-            # 繪製高低連線折線
             if len(zigzag_points) > 1:
                 x_coords, y_coords = zip(*zigzag_points)
                 main_ax.plot(x_coords, y_coords, color='#666666', linestyle='-', linewidth=2.5, zorder=3)
 
-            # 標註 H / B
             for idx, row in df_k[df_k['Label_Text'] != ""].iterrows():
                 x_pos = df_k.index.get_loc(idx)
                 color = 'red' if row['Label_Text'] == "H" else 'green'
@@ -338,4 +372,4 @@ if "breakout" in st.session_state:
     except Exception as chart_err:
         st.error(f"K線轉換分析失敗: {chart_err}")
 else:
-    st.info("💡 提示：請先點擊上方的『🚀 盤後選股』按鈕生成三大池股票清單，此處將自動啟用連動看盤功能。")
+    st.info("💡 提示：請先點擊上方的『🚀 盤後選股』按鈕生成三大池股票清單。")
