@@ -1,135 +1,237 @@
 import streamlit as st
 import pandas as pd
-import requests
 import yfinance as yf
-from multiprocessing import Pool, cpu_count
+import twstock
 
-st.title("🚀 2000檔台股加速選股（單檔版）")
+st.set_page_config(
+    page_title="三池選股系統",
+    layout="wide"
+)
 
-# =========================
-# 股票池（TWSE + OTC）
-# =========================
-@st.cache_data
-def get_universe():
-
-    try:
-        twse = requests.get(
-            "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL",
-            timeout=10
-        ).json()
-        twse = [x["Code"] + ".TW" for x in twse]
-    except:
-        twse = []
-
-    try:
-        tpex = requests.get(
-            "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_stk_info",
-            timeout=10
-        ).json()
-        tpex = [x["SecuritiesCompanyCode"] + ".TWO" for x in tpex]
-    except:
-        tpex = []
-
-    return list(set(twse + tpex))
-
+st.title("📊 三池 + 自動打分選股系統")
 
 # =========================
-# 單股抓取
+# ⚙️ 參數
 # =========================
-def fetch(ticker):
-
-    try:
-        df = yf.download(ticker, period="2mo", interval="1d", progress=False)
-
-        if len(df) < 20:
-            return None
-
-        close = df["Close"].iloc[-1]
-        prev = df["Close"].iloc[-2]
-
-        volume = df["Volume"].iloc[-1]
-        avg_volume = df["Volume"].rolling(5).mean().iloc[-1]
-
-        ma5 = df["Close"].rolling(5).mean().iloc[-1]
-        ma20 = df["Close"].rolling(20).mean().iloc[-1]
-
-        return {
-            "ticker": ticker,
-            "close": float(close),
-            "change_pct": float((close - prev) / prev * 100),
-            "volume": float(volume),
-            "avg_volume": float(avg_volume),
-            "ma5": float(ma5),
-            "ma20": float(ma20),
-        }
-
-    except:
-        return None
-
+bias_limit = st.slider("負乖離 (%)", -20, -1, -8)
+rsi_limit = st.slider("RSI 上限", 10, 50, 30)
 
 # =========================
-# 打分
+# RSI
 # =========================
-def score(x):
+def calculate_rsi(series, period=14):
+    delta = series.diff()
+    gain = delta.clip(lower=0)
+    loss = -delta.clip(upper=0)
 
-    s = 0
+    avg_gain = gain.rolling(period).mean()
+    avg_loss = loss.rolling(period).mean()
 
-    if x["change_pct"] > 3:
-        s += 1
-    if x["volume"] > x["avg_volume"]:
-        s += 1
-    if x["close"] > x["ma5"]:
-        s += 1
-    if x["ma5"] > x["ma20"]:
-        s += 1
-    if x["change_pct"] >= 8:
-        s -= 2
+    rs = avg_gain / avg_loss
+    rsi = 100 - (100 / (1 + rs))
 
-    return s
-
+    return rsi
 
 # =========================
-# 平行掃描
+# 股票池
 # =========================
-def scan(tickers):
+@st.cache_data(ttl=86400)
+def get_stock_list():
+    stocks = []
 
-    with Pool(cpu_count()) as p:
-        res = p.map(fetch, tickers)
+    for code, info in twstock.codes.items():
+        if info.market in ["上市", "上櫃"]:
+            if len(code) == 4 and code.isdigit():
+                ticker = f"{code}.TW" if info.market == "上市" else f"{code}.TWO"
 
-    res = [r for r in res if r is not None]
+                stocks.append({
+                    "code": code,
+                    "name": info.name,
+                    "ticker": ticker
+                })
 
-    for r in res:
-        r["score"] = score(r)
+    return stocks
 
-    return pd.DataFrame(res)
+stock_list = get_stock_list()
 
+ticker_map = {
+    s["ticker"]: {"code": s["code"], "name": s["name"]}
+    for s in stock_list
+}
+
+tickers = list(ticker_map.keys())
+
+st.write(f"📦 股票數量：{len(tickers)}")
 
 # =========================
-# 主流程
+# 三池分類
 # =========================
-tickers = get_universe()
+def classify_pool(bias, rsi, close, ma5, ma20, volume_ok):
 
-st.write("📊 股票數量：", len(tickers))
+    # 動能股
+    if close > ma5 and volume_ok and rsi > 45:
+        return "動能股"
 
-df = scan(tickers)
+    # 突破股
+    if close > ma20 and volume_ok:
+        return "突破股"
 
-df = df.sort_values("score", ascending=False)
+    # 回檔股
+    if close < ma5 and close > ma20:
+        return "回檔股"
 
-# 市場狀態
-ratio = len(df[df["score"] >= 3]) / len(df)
+    return None
 
-if ratio > 0.4:
-    mode = "🔥 強勢盤"
-elif ratio > 0.2:
-    mode = "🟢 正常盤"
-else:
-    mode = "🟡 偏弱盤"
+# =========================
+# 打分系統
+# =========================
+def score_pool(bias, rsi, close, ma5, ma20, volume_ok):
 
-st.subheader("📌 市場狀態")
-st.write(mode)
+    score = 0
 
-st.subheader("🥇 Top 10")
-st.dataframe(df.head(10))
+    if close > ma5:
+        score += 2
 
-st.subheader("📊 全市場")
-st.dataframe(df)
+    if ma5 > ma20:
+        score += 2
+
+    if volume_ok:
+        score += 1
+
+    if rsi > 40 and rsi < 70:
+        score += 1
+
+    # 不追高
+    if bias > 8:
+        score -= 3
+
+    return score
+
+# =========================
+# 掃描
+# =========================
+if st.button("🚀 開始掃描"):
+
+    results = []
+
+    progress = st.progress(0)
+    status = st.empty()
+
+    batch_size = 200
+    total_batches = (len(tickers) + batch_size - 1) // batch_size
+
+    for i in range(total_batches):
+
+        batch = tickers[i*batch_size:(i+1)*batch_size]
+
+        status.text(f"📥 批次 {i+1}/{total_batches}")
+
+        try:
+            data = yf.download(
+                tickers=batch,
+                period="3mo",
+                interval="1d",
+                group_by="ticker",
+                threads=True,
+                progress=False
+            )
+
+            for t in batch:
+
+                try:
+                    stock = data[t]
+                    if stock.empty:
+                        continue
+
+                    close = stock["Close"]
+                    volume = stock["Volume"]
+                    open_price = stock["Open"]
+
+                    if len(close) < 20:
+                        continue
+
+                    ma5 = close.rolling(5).mean().iloc[-1]
+                    ma20 = close.rolling(20).mean().iloc[-1]
+
+                    latest = float(close.iloc[-1])
+                    latest_vol = float(volume.iloc[-1])
+
+                    # RSI
+                    rsi = calculate_rsi(close).iloc[-1]
+                    if pd.isna(rsi):
+                        continue
+
+                    # 負乖離
+                    bias = (latest - ma20) / ma20 * 100
+
+                    # 成交量
+                    vol_ma5 = volume.rolling(5).mean().iloc[-1]
+                    volume_ok = latest_vol > vol_ma5
+
+                    # 紅K
+                    is_red = latest > open_price.iloc[-1]
+
+                    # 不破低
+                    not_break_low = latest >= close.tail(5).min()
+
+                    pool = classify_pool(
+                        bias, rsi, latest, ma5, ma20, volume_ok
+                    )
+
+                    score = score_pool(
+                        bias, rsi, latest, ma5, ma20, volume_ok
+                    )
+
+                    if pool and is_red and volume_ok and not_break_low:
+
+                        info = ticker_map[t]
+
+                        results.append({
+                            "代號": info["code"],
+                            "名稱": info["name"],
+                            "收盤": round(latest, 2),
+                            "乖離": round(bias, 2),
+                            "RSI": round(rsi, 2),
+                            "量": int(latest_vol),
+                            "池別": pool,
+                            "分數": score
+                        })
+
+                except:
+                    continue
+
+        except:
+            continue
+
+        progress.progress((i+1)/total_batches)
+
+    status.text("✅ 完成")
+
+    # =========================
+    # 結果
+    # =========================
+    if results:
+
+        df = pd.DataFrame(results)
+
+        df = df.sort_values("分數", ascending=False)
+
+        # 今日主池
+        pool_count = df["池別"].value_counts()
+
+        if len(pool_count) > 0:
+            main_pool = pool_count.idxmax()
+        else:
+            main_pool = "無明確主力"
+
+        st.subheader("📌 今日主交易池")
+        st.write(main_pool)
+
+        st.subheader("🥇 Top 10")
+        st.dataframe(df.head(10), use_container_width=True)
+
+        st.subheader("📊 三池分布")
+        st.write(pool_count)
+
+    else:
+        st.warning("沒有符合條件的股票")
