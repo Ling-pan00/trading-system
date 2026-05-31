@@ -70,43 +70,36 @@ def score(price, ma5, ma10, ma20, vol, vol_ma5, change_pct):
     s += 1 if change_pct > 0 else 0
 
     return s
-    
+
+
 # =========================
-# 三池判斷（唯一正確版本）
+# 三池判斷（修正版核心）
 # =========================
 def classify_pool(s, df, price, ma5, ma10, ma20, open_price):
 
-    # 月線向上（趨勢）
+    # 趨勢
     month_up = df["ma20"].iloc[-1] > df["ma20"].iloc[-5]
-
-    # 股價在月線上
     above_ma20 = price > ma20
 
-    # 曾跌破 MA5（回檔）
-    dipped = (df["Close"].iloc[-5:-1] < df["ma5"].iloc[-5:-1]).any()
+    # 🟡 第一池（洗盤轉強：不限制時間）
+    dipped = (df["Low"] < df["ma5"]).any()
+    reclaim_ma5 = price > ma5
 
-    # 今日站回 MA5
-    reclaim_ma5 = (price > ma5) and (df["Close"].iloc[-2] <= df["ma5"].iloc[-2])
+    pool1 = (
+        month_up
+        and above_ma20
+        and dipped
+        and reclaim_ma5
+    )
 
-    # 紅K
-    red_k = price > open_price
-# 🟡 第一池（回檔轉強：不限制時間）
-dipped = (df["Low"] < df["ma5"]).any()   # 曾經有回檔（不管哪一天）
+    # 🟠 第二池
+    pool2 = (
+        month_up
+        and above_ma20
+        and s >= 4
+    )
 
-reclaim_ma5 = price > ma5                # 現在站回 MA5
-
-pool1 = (
-    month_up
-    and above_ma20
-    and dipped
-    and reclaim_ma5
-)
-    
-
-    # 🟠 第二池（趨勢形成）
-    pool2 = month_up and above_ma20 and s >= 4
-
-    # 🔴 第三池（主升段）
+    # 🔴 第三池
     pool3 = (
         month_up
         and above_ma20
@@ -147,7 +140,7 @@ def trade_levels(price, ma5, ma10, pool):
 
 
 # =========================
-# 🚀 盤後選股主程式
+# 🚀 盤後選股
 # =========================
 if st.button("🚀 盤後選股"):
 
@@ -269,127 +262,3 @@ if st.button("🚀 盤後選股"):
         st.session_state["pool1"] = df[df["池別"] == "🟡 第一池"]
         st.session_state["pool2"] = df[df["池別"] == "🟠 第二池"]
         st.session_state["pool3"] = df[df["池別"] == "🔴 第三池"]
-        
-# =========================
-# 📈 盤中監控
-# =========================
-st.subheader("📈 盤中監控")
-
-
-def run_monitor(df):
-
-    live = []
-
-    for _, row in df.iterrows():
-
-        try:
-            t = row["ticker"]
-
-            data = yf.download(
-                t,
-                period="10d",
-                interval="1d",
-                progress=False
-            )
-
-            if data is None or len(data) < 6:
-                continue
-
-            close = data["Close"]
-            volume = data["Volume"]
-
-            open_now = data["Open"].iloc[-1]
-            close_now = close.iloc[-1]
-
-            ma5 = close.rolling(5).mean().iloc[-1]
-
-            high_5 = data["High"].iloc[-6:-1].max()
-
-            vol_today = volume.iloc[-1]
-            vol_avg = volume.rolling(5).mean().iloc[-1]
-
-            # =====================
-            # 條件
-            # =====================
-
-            red_k = close_now > open_now
-            above_ma5 = close_now > ma5
-            breakout = close_now > high_5
-
-            # 量能（避免太鬆，改成真正有效）
-            vol_ok = vol_today > vol_avg
-
-            # =====================
-            # 訊號
-            # =====================
-
-            if red_k and above_ma5 and vol_ok and breakout:
-                signal = "🟢 強力BUY"
-
-            elif red_k and above_ma5:
-                signal = "🟡 WATCH"
-
-            else:
-                signal = "🔴 NO"
-
-            live.append({
-                "代號": row["代號"],
-                "名稱": row["名稱"],
-                "池別": row["池別"],
-                "收盤": round(close_now, 2),
-                "MA5": round(ma5, 2),
-                "紅K": "✅" if red_k else "❌",
-                "站上MA5": "✅" if above_ma5 else "❌",
-                "量能": "✅" if vol_ok else "❌",
-                "突破": "✅" if breakout else "❌",
-                "訊號": signal
-            })
-
-        except:
-            continue
-
-    return pd.DataFrame(live)
-
-
-# =========================
-# 🔄 更新盤中監控
-# =========================
-if st.button("🔄 更新盤中監控"):
-
-    if "pool1" not in st.session_state:
-        st.warning("請先執行盤後選股")
-        st.stop()
-
-    col1, col2, col3 = st.columns(3)
-
-    with col1:
-        st.markdown("### 🟡 第一池")
-        p1 = run_monitor(st.session_state["pool1"])
-        st.dataframe(p1, use_container_width=True)
-
-    with col2:
-        st.markdown("### 🟠 第二池")
-        p2 = run_monitor(st.session_state["pool2"])
-        st.dataframe(p2, use_container_width=True)
-
-    with col3:
-        st.markdown("### 🔴 第三池")
-        p3 = run_monitor(st.session_state["pool3"])
-        st.dataframe(p3, use_container_width=True)
-
-    # =====================
-    # 🔥 尾盤優先名單
-    # =====================
-    st.subheader("🔥 尾盤優先觀察名單")
-
-    try:
-        buy_list = pd.concat([p1, p2, p3])
-
-        buy_list = buy_list[
-            buy_list["訊號"] == "🟢 強力BUY"
-        ]
-
-        st.dataframe(buy_list, use_container_width=True)
-
-    except:
-        pass
