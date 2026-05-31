@@ -44,7 +44,7 @@ try:
         
         df = df.dropna(subset=['Close', '5MA', '20MA']).copy()
 
-        # 2. 轉折波段邏輯 (5MA 交叉)
+        # 2. 轉折波段邏輯
         df['State'] = np.where(df['Close'] > df['5MA'], 1, -1)
         df['State_Group'] = (df['State'] != df['State'].shift()).cumsum()
 
@@ -56,67 +56,62 @@ try:
             group_data = grouped.get_group(g_id)
             state = group_data['State'].iloc[0]
             if g_id <= 2: continue
-            if state == 1: # 高點
+            if state == 1:
                 highest_idx = group_data['High'].idxmax()
                 zigzag_points.append((df.index.get_loc(highest_idx), df.loc[highest_idx, 'High']))
                 df.loc[highest_idx, 'Label'] = "H"
-            else: # 低點
+            else:
                 lowest_idx = group_data['Low'].idxmin()
                 zigzag_points.append((df.index.get_loc(lowest_idx), df.loc[lowest_idx, 'Low']))
                 df.loc[lowest_idx, 'Label'] = "B"
 
-        # 3. 取得均線趨勢與資訊
-        def get_trend_info(col_name):
+        # 3. 取得均線數據與箭頭
+        def get_ma_details(col_name):
             now = df[col_name].iloc[-1]
             pre = df[col_name].iloc[-2]
             arrow = "▲" if now >= pre else "▼"
-            return f"{col_name}: {now:>8.2f} {arrow}"
+            return f"{now:.2f} {arrow}"
 
-        ma5_txt = get_trend_info('5MA')
-        ma10_txt = get_trend_info('10MA')
-        ma20_txt = get_trend_info('20MA')
+        ma5_info = get_ma_details('5MA')
+        ma10_info = get_ma_details('10MA')
+        ma20_info = get_ma_details('20MA')
 
-        # 4. 繪製圖表
+        # 【核心修改】使用 HTML / CSS 在圖表正上方渲染一整條漂亮的均線數據列
+        st.markdown(f"""
+            <div style="
+                background-color: #f8f9fa; 
+                padding: 10px 15px; 
+                border-radius: 5px; 
+                margin-top: 10px; 
+                margin-bottom: 5px; 
+                font-family: monospace; 
+                font-size: 15px; 
+                font-weight: bold;
+                border-left: 5px solid #6c757d;
+            ">
+                <span style="color: #FF9800; margin-right: 20px;">5MA: {ma5_info}</span>
+                <span style="color: #2196F3; margin-right: 20px;">10MA: {ma10_info}</span>
+                <span style="color: #9C27B0;">20MA: {ma20_info}</span>
+            </div>
+        """, unsafe_allow_html=True)
+
+        # 4. 繪製圖表 (把文字徹底移出這裡，保持圖表內部乾淨)
         mc = mpf.make_marketcolors(up='red', down='green', edge='inherit', wick='inherit', volume='in')
         s = mpf.make_mpf_style(marketcolors=mc, gridstyle='--')
 
-        # 均線顏色設定
-        color_5ma = 'orange'
-        color_10ma = 'blue'
-        color_20ma = 'purple'
-
         plots = [
-            mpf.make_addplot(df['5MA'], color=color_5ma, width=1),
-            mpf.make_addplot(df['10MA'], color=color_10ma, width=1),
-            mpf.make_addplot(df['20MA'], color=color_20ma, width=1)
+            mpf.make_addplot(df['5MA'], color='orange', width=1),
+            mpf.make_addplot(df['10MA'], color='blue', width=1),
+            mpf.make_addplot(df['20MA'], color='purple', width=1)
         ]
 
         fig, axlist = mpf.plot(
             df, type='candle', style=s, addplot=plots, 
-            returnfig=True, figsize=(12, 8), volume=True,
+            returnfig=True, figsize=(12, 7), volume=True,
             panel_ratios=(4,1)
         )
         
         main_ax = axlist[0]
-
-        # 【核心修改】在圖表右上角繪製多色文字資訊
-        # 先畫一個白底的外框
-        main_ax.text(0.98, 0.97, " \n \n ", transform=main_ax.transAxes,
-                    fontsize=12, verticalalignment='top', horizontalalignment='right', family='monospace',
-                    bbox=dict(boxstyle='round,pad=0.5', facecolor='white', alpha=0.85, edgecolor='gray'))
-        
-        # 依序在框內填入對應顏色的文字 (調整 y 軸間距 y_space)
-        y_start = 0.95
-        y_space = 0.035
-        
-        main_ax.text(0.96, y_start, ma5_txt, transform=main_ax.transAxes, color=color_5ma,
-                    fontsize=12, weight='bold', verticalalignment='top', horizontalalignment='right', family='monospace')
-        
-        main_ax.text(0.96, y_start - y_space, ma10_txt, transform=main_ax.transAxes, color=color_10ma,
-                    fontsize=12, weight='bold', verticalalignment='top', horizontalalignment='right', family='monospace')
-        
-        main_ax.text(0.96, y_start - (y_space * 2), ma20_txt, transform=main_ax.transAxes, color=color_20ma,
-                    fontsize=12, weight='bold', verticalalignment='top', horizontalalignment='right', family='monospace')
 
         # 5. 連接轉折線
         if len(zigzag_points) > 1:
@@ -132,6 +127,7 @@ try:
                         ha='center', va='bottom' if is_h else 'top',
                         bbox=dict(boxstyle="circle,pad=0.1", fc="yellow", ec="none", alpha=0.6))
 
+        # 網頁呈現圖表
         st.pyplot(fig)
 
 except Exception as e:
