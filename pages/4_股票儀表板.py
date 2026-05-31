@@ -1,173 +1,59 @@
 import streamlit as st
 import pandas as pd
-import json
 
-# =========================
-# 假資料（之後可換成真實API）
-# =========================
+st.title("📊 2000檔台股專業選股系統")
 
-def get_data():
-    return pd.DataFrame([
-        {
-            "ticker": "2330",
-            "change_pct": 4,
-            "volume": 20000,
-            "avg_volume_5d": 15000,
-            "close": 900,
-            "ma5": 880,
-            "ma20": 860,
-            "breakout": True,
-            "upper_shadow": False,
-            "trend_up": True,
-            "red_3": False
-        },
-        {
-            "ticker": "2454",
-            "change_pct": 6,
-            "volume": 18000,
-            "avg_volume_5d": 15000,
-            "close": 120,
-            "ma5": 115,
-            "ma20": 110,
-            "breakout": False,
-            "upper_shadow": False,
-            "trend_up": True,
-            "red_3": False
-        },
-        {
-            "ticker": "3017",
-            "change_pct": 2,
-            "volume": 9000,
-            "avg_volume_5d": 8000,
-            "close": 45,
-            "ma5": 44,
-            "ma20": 43,
-            "breakout": False,
-            "upper_shadow": False,
-            "trend_up": True,
-            "red_3": False
-        }
-    ])
+# 假資料（未來換API）
+from random import random, randint
 
+def fake_data(t):
+    return {
+        "close": randint(50,200),
+        "change_pct": random()*6,
+        "volume": randint(1000,5000),
+        "avg_volume": 3000,
+        "ma5": 100,
+        "ma20": 95
+    }
 
-# =========================
-# 風控
-# =========================
+universe = ["2330.TW","2317.TW","2454.TW","2303.TW"]
 
-def risk_filter(s):
+results = []
 
-    if s["change_pct"] >= 8:
-        return False
+for t in universe:
 
-    if s["volume"] > s["avg_volume_5d"] * 2 and s["upper_shadow"]:
-        return False
+    d = fake_data(t)
 
-    return True
+    stock = {
+        "ticker": t,
+        "close": d["close"],
+        "change_pct": d["change_pct"],
+        "volume": d["volume"],
+        "avg_volume": d["avg_volume"],
+        "ma5": d["ma5"],
+        "ma20": d["ma20"],
+        "trend_up": d["ma5"] > d["ma20"],
+        "breakout": d["close"] > d["ma20"],
+        "sector": classify_sector(t)
+    }
 
+    stock["score"] = score(stock)
 
-# =========================
-# 打分
-# =========================
+    results.append(stock)
 
-def score(s):
+df = pd.DataFrame(results)
 
-    sc = 0
+mode, N = market_regime(results)
 
-    if 3 <= s["change_pct"] < 5:
-        sc += 1
-    elif 5 <= s["change_pct"] < 8:
-        sc += 2
+df = df.sort_values("score", ascending=False)
 
-    if s["volume"] > s["avg_volume_5d"]:
-        sc += 1
+top = df.head(N)
 
-    if s["close"] > s["ma5"]:
-        sc += 1
+st.subheader("📌 市場狀態")
+st.write(mode)
 
-    if s["close"] > s["ma20"]:
-        sc += 1
+st.subheader("📊 族群強弱")
+st.write(df.groupby("sector")["score"].mean())
 
-    if s["breakout"]:
-        sc += 1
-
-    if not s["upper_shadow"]:
-        sc += 1
-
-    if s["trend_up"]:
-        sc += 1
-
-    if s["red_3"]:
-        sc -= 2
-
-    return sc
-
-
-# =========================
-# 市場判斷
-# =========================
-
-def market_decision(df):
-
-    strong = len(df[df["score"] >= 7])
-
-    if strong >= 2:
-        return "可做"
-    elif strong == 1:
-        return "小倉"
-    else:
-        return "不做"
-
-
-# =========================
-# 主程式
-# =========================
-
-st.set_page_config(page_title="交易系統", layout="wide")
-
-st.title("📊 每日交易系統")
-
-df = get_data()
-
-candidates = []
-
-for _, s in df.iterrows():
-
-    s = s.to_dict()
-
-    if not risk_filter(s):
-        continue
-
-    s["score"] = score(s)
-    candidates.append(s)
-
-result = pd.DataFrame(candidates)
-
-if len(result) == 0:
-    st.warning("今日無符合標的")
-    st.stop()
-
-result = result.sort_values("score", ascending=False)
-
-top10 = result.head(10)
-
-decision = market_decision(top10)
-
-# =========================
-# UI
-# =========================
-
-st.subheader("📌 市場判斷")
-st.write(decision)
-
-st.subheader("🥇 Top 1")
-st.write(top10.iloc[0]["ticker"])
-
-st.subheader("📈 Top 10")
-st.dataframe(top10[["ticker","score"]])
-
-st.subheader("🚨 風控規則")
-st.write("""
-- +8% 不追
-- 爆量長上影淘汰
-- 連3紅K降分
-""")
+st.subheader("🥇 Top 股票")
+st.dataframe(top)
