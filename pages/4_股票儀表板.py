@@ -3,34 +3,9 @@ import pandas as pd
 import yfinance as yf
 import twstock
 
-st.set_page_config(
-    page_title="三池選股系統",
-    layout="wide"
-)
+st.set_page_config(page_title="三池選股系統（乾淨版）", layout="wide")
 
-st.title("📊 三池 + 自動打分選股系統")
-
-# =========================
-# ⚙️ 參數
-# =========================
-bias_limit = st.slider("負乖離 (%)", -20, -1, -8)
-rsi_limit = st.slider("RSI 上限", 10, 50, 30)
-
-# =========================
-# RSI
-# =========================
-def calculate_rsi(series, period=14):
-    delta = series.diff()
-    gain = delta.clip(lower=0)
-    loss = -delta.clip(upper=0)
-
-    avg_gain = gain.rolling(period).mean()
-    avg_loss = loss.rolling(period).mean()
-
-    rs = avg_gain / avg_loss
-    rsi = 100 - (100 / (1 + rs))
-
-    return rsi
+st.title("📊 三池選股系統（純策略版）")
 
 # =========================
 # 股票池
@@ -42,6 +17,7 @@ def get_stock_list():
     for code, info in twstock.codes.items():
         if info.market in ["上市", "上櫃"]:
             if len(code) == 4 and code.isdigit():
+
                 ticker = f"{code}.TW" if info.market == "上市" else f"{code}.TWO"
 
                 stocks.append({
@@ -51,6 +27,7 @@ def get_stock_list():
                 })
 
     return stocks
+
 
 stock_list = get_stock_list()
 
@@ -63,52 +40,59 @@ tickers = list(ticker_map.keys())
 
 st.write(f"📦 股票數量：{len(tickers)}")
 
+
 # =========================
 # 三池分類
 # =========================
-def classify_pool(bias, rsi, close, ma5, ma20, volume_ok):
+def classify_pool(change_pct, close, ma5, ma10, ma20, vol, vol_ma5, is_red):
 
-    # 動能股
-    if close > ma5 and volume_ok and rsi > 45:
+    # 🟡 動能股池
+    if (
+        change_pct > 3 and change_pct < 10
+        and close > ma5
+        and vol > vol_ma5
+    ):
         return "動能股"
 
-    # 突破股
-    if close > ma20 and volume_ok:
+    # 🚀 突破股池
+    if (
+        close > ma20
+        and vol > vol_ma5
+        and is_red
+        and close > ma10
+    ):
         return "突破股"
 
-    # 回檔股
-    if close < ma5 and close > ma20:
+    # 🧊 回檔強勢股池
+    if (
+        close < ma5
+        and close > ma10
+        and close > ma20
+    ):
         return "回檔股"
 
     return None
 
-# =========================
-# 打分系統
-# =========================
-def score_pool(bias, rsi, close, ma5, ma20, volume_ok):
-
-    score = 0
-
-    if close > ma5:
-        score += 2
-
-    if ma5 > ma20:
-        score += 2
-
-    if volume_ok:
-        score += 1
-
-    if rsi > 40 and rsi < 70:
-        score += 1
-
-    # 不追高
-    if bias > 8:
-        score -= 3
-
-    return score
 
 # =========================
-# 掃描
+# 風控濾網
+# =========================
+def trade_filter(change_pct, volume_ok, upper_shadow):
+
+    # ❌ +8% 不追
+    no_fomo = change_pct < 8
+
+    # ❌ 連3紅K（簡化：略過但保守）
+    no_overheat = True
+
+    # ❌ 爆量長上影
+    no_distribution = not upper_shadow
+
+    return no_fomo and no_overheat and no_distribution
+
+
+# =========================
+# 掃描開始
 # =========================
 if st.button("🚀 開始掃描"):
 
@@ -124,7 +108,7 @@ if st.button("🚀 開始掃描"):
 
         batch = tickers[i*batch_size:(i+1)*batch_size]
 
-        status.text(f"📥 批次 {i+1}/{total_batches}")
+        status.text(f"📥 第 {i+1}/{total_batches} 批")
 
         try:
             data = yf.download(
@@ -144,57 +128,56 @@ if st.button("🚀 開始掃描"):
                         continue
 
                     close = stock["Close"]
-                    volume = stock["Volume"]
                     open_price = stock["Open"]
+                    volume = stock["Volume"]
+                    high = stock["High"]
 
                     if len(close) < 20:
                         continue
 
-                    ma5 = close.rolling(5).mean().iloc[-1]
-                    ma20 = close.rolling(20).mean().iloc[-1]
-
-                    latest = float(close.iloc[-1])
+                    latest_close = float(close.iloc[-1])
                     latest_vol = float(volume.iloc[-1])
 
-                    # RSI
-                    rsi = calculate_rsi(close).iloc[-1]
-                    if pd.isna(rsi):
-                        continue
+                    ma5 = close.rolling(5).mean().iloc[-1]
+                    ma10 = close.rolling(10).mean().iloc[-1]
+                    ma20 = close.rolling(20).mean().iloc[-1]
 
-                    # 負乖離
-                    bias = (latest - ma20) / ma20 * 100
-
-                    # 成交量
                     vol_ma5 = volume.rolling(5).mean().iloc[-1]
+
+                    change_pct = (close.iloc[-1] - close.iloc[-2]) / close.iloc[-2] * 100
+
+                    is_red = latest_close > open_price.iloc[-1]
+
+                    upper_shadow = (
+                        high.iloc[-1] - latest_close
+                    ) > (latest_close - open_price.iloc[-1])
+
                     volume_ok = latest_vol > vol_ma5
 
-                    # 紅K
-                    is_red = latest > open_price.iloc[-1]
-
-                    # 不破低
-                    not_break_low = latest >= close.tail(5).min()
-
                     pool = classify_pool(
-                        bias, rsi, latest, ma5, ma20, volume_ok
+                        change_pct,
+                        latest_close,
+                        ma5,
+                        ma10,
+                        ma20,
+                        latest_vol,
+                        vol_ma5,
+                        is_red
                     )
 
-                    score = score_pool(
-                        bias, rsi, latest, ma5, ma20, volume_ok
-                    )
+                    ok = trade_filter(change_pct, volume_ok, upper_shadow)
 
-                    if pool and is_red and volume_ok and not_break_low:
+                    if pool and ok:
 
                         info = ticker_map[t]
 
                         results.append({
                             "代號": info["code"],
                             "名稱": info["name"],
-                            "收盤": round(latest, 2),
-                            "乖離": round(bias, 2),
-                            "RSI": round(rsi, 2),
+                            "收盤": round(latest_close, 2),
+                            "漲跌%": round(change_pct, 2),
                             "量": int(latest_vol),
-                            "池別": pool,
-                            "分數": score
+                            "池別": pool
                         })
 
                 except:
@@ -203,35 +186,31 @@ if st.button("🚀 開始掃描"):
         except:
             continue
 
-        progress.progress((i+1)/total_batches)
+        progress.progress((i + 1) / total_batches)
 
     status.text("✅ 完成")
 
     # =========================
-    # 結果
+    # 輸出
     # =========================
     if results:
 
         df = pd.DataFrame(results)
 
-        df = df.sort_values("分數", ascending=False)
-
-        # 今日主池
+        # 池別統計
         pool_count = df["池別"].value_counts()
 
-        if len(pool_count) > 0:
-            main_pool = pool_count.idxmax()
-        else:
-            main_pool = "無明確主力"
+        # 主交易池
+        main_pool = pool_count.idxmax() if len(pool_count) > 0 else "無"
 
         st.subheader("📌 今日主交易池")
         st.write(main_pool)
 
-        st.subheader("🥇 Top 10")
+        st.subheader("🥇 Top 10 強勢股")
         st.dataframe(df.head(10), use_container_width=True)
 
         st.subheader("📊 三池分布")
         st.write(pool_count)
 
     else:
-        st.warning("沒有符合條件的股票")
+        st.warning("⚠️ 今天沒有符合條件的股票")
