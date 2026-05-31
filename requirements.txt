@@ -7,3 +7,4 @@ plotly
 streamlit-echarts
 mplfinance
 numpy
+lxml
