@@ -35,7 +35,7 @@ st.write(f"📦 股票數：{len(tickers)}")
 
 
 # =========================
-# 評分
+# 評分（保留你的成功邏輯）
 # =========================
 def score(close, ma5, ma10, ma20, vol, vol_ma5, change_pct):
 
@@ -56,20 +56,20 @@ def score(close, ma5, ma10, ma20, vol, vol_ma5, change_pct):
 
 
 # =========================
-# 三池分類
+# 三池（穩定版分類）
 # =========================
 def classify_pool(score):
 
-    if score >= 5:
-        return "🚀 突破股"
-    elif score >= 3:
-        return "🟡 動能股"
+    if score >= 6:
+        return "🔴 第三池"
+    elif score >= 4:
+        return "🟠 第二池"
     else:
-        return "🧊 回檔股"
+        return "🟡 第一池"
 
 
 # =========================
-# 盤中訊號（不變）
+# 盤中訊號
 # =========================
 def intraday_signal(open_p, close_y, low_y, high_y, vol, vol_y):
 
@@ -79,7 +79,7 @@ def intraday_signal(open_p, close_y, low_y, high_y, vol, vol_y):
     breakout = open_p > high_y
 
     if strong and hold and vol_ok:
-        return "🟢 BUY（追強）" if breakout else "🟢 BUY（回測）"
+        return "🟢 BUY" if breakout else "🟡 WATCH"
 
     if hold:
         return "🟡 WATCH"
@@ -138,19 +138,18 @@ if st.button("🚀 盤後選股"):
 
                     vol_ma5 = volume.rolling(5).mean().iloc[-1]
 
-                    # =========================
-                    # 月線濾網（你這次要的重點）
-                    # =========================
                     price = close.iloc[-1]
-                    ma20_value = close.rolling(20).mean().iloc[-1]
 
-                    if price <= ma20_value:
+                    # =========================
+                    # ⭐ 月線濾網（新增重點）
+                    # =========================
+                    if price <= ma20:
                         continue
 
                     # =========================
                     # 分數
                     # =========================
-                    change_pct = (close.iloc[-1] - close.iloc[-2]) / close.iloc[-2] * 100
+                    change_pct = (price - close.iloc[-2]) / close.iloc[-2] * 100
 
                     s = score(
                         price,
@@ -167,16 +166,16 @@ if st.button("🚀 盤後選股"):
                     buy = float(price)
 
                     # =========================
-                    # 風控（簡單版）
+                    # 風控
                     # =========================
                     stop = round(buy * 0.95, 2)
                     target = round(buy * 1.15, 2)
 
-                    if pool == "🟡 動能股":
+                    if pool == "🟠 第二池":
                         stop = round(ma5, 2)
                         target = round(buy * 1.2, 2)
 
-                    elif pool == "🚀 突破股":
+                    elif pool == "🔴 第三池":
                         stop = round(ma10, 2)
                         target = round(buy * 1.25, 2)
 
@@ -204,26 +203,26 @@ if st.button("🚀 盤後選股"):
 
     df = pd.DataFrame(results)
 
-    breakout_df = df[df["池別"]=="🚀 突破股"].sort_values("分數", ascending=False).head(10)
-    momentum_df = df[df["池別"]=="🟡 動能股"].sort_values("分數", ascending=False).head(10)
-    pullback_df = df[df["池別"]=="🧊 回檔股"].sort_values("分數", ascending=False).head(10)
+    pool1 = df[df["池別"]=="🟡 第一池"].sort_values("分數",ascending=False).head(10)
+    pool2 = df[df["池別"]=="🟠 第二池"].sort_values("分數",ascending=False).head(10)
+    pool3 = df[df["池別"]=="🔴 第三池"].sort_values("分數",ascending=False).head(10)
 
-    st.subheader("🚀 突破股 Top10")
-    st.dataframe(breakout_df, use_container_width=True)
+    st.subheader("🟡 第一池 Top10")
+    st.dataframe(pool1, use_container_width=True)
 
-    st.subheader("🟡 動能股 Top10")
-    st.dataframe(momentum_df, use_container_width=True)
+    st.subheader("🟠 第二池 Top10")
+    st.dataframe(pool2, use_container_width=True)
 
-    st.subheader("🧊 回檔股 Top10")
-    st.dataframe(pullback_df, use_container_width=True)
+    st.subheader("🔴 第三池 Top10")
+    st.dataframe(pool3, use_container_width=True)
 
-    st.session_state["breakout"] = breakout_df
-    st.session_state["momentum"] = momentum_df
-    st.session_state["pullback"] = pullback_df
+    st.session_state["pool1"] = pool1
+    st.session_state["pool2"] = pool2
+    st.session_state["pool3"] = pool3
 
 
 # =========================
-# 盤中監控（不變）
+# 盤中監控
 # =========================
 st.subheader("📈 盤中三池監控")
 
@@ -254,19 +253,13 @@ def run_monitor(df):
             vol_y = volume.rolling(5).mean().iloc[-1]
 
             sig = intraday_signal(
-                open_now,
-                close_y,
-                low_y,
-                high_y,
-                vol,
-                vol_y
+                open_now, close_y, low_y, high_y, vol, vol_y
             )
 
             live.append({
                 "代號": row["代號"],
                 "名稱": row["名稱"],
                 "池別": row["池別"],
-                "分數": row["分數"],
                 "訊號": sig
             })
 
@@ -278,20 +271,20 @@ def run_monitor(df):
 
 if st.button("🔄 更新盤中監控"):
 
-    if "breakout" not in st.session_state:
+    if "pool1" not in st.session_state:
         st.warning("請先盤後選股")
         st.stop()
 
     col1, col2, col3 = st.columns(3)
 
     with col1:
-        st.markdown("### 🚀 突破股監控")
-        st.dataframe(run_monitor(st.session_state["breakout"]), use_container_width=True)
+        st.markdown("### 🟡 第一池")
+        st.dataframe(run_monitor(st.session_state["pool1"]), use_container_width=True)
 
     with col2:
-        st.markdown("### 🟡 動能股監控")
-        st.dataframe(run_monitor(st.session_state["momentum"]), use_container_width=True)
+        st.markdown("### 🟠 第二池")
+        st.dataframe(run_monitor(st.session_state["pool2"]), use_container_width=True)
 
     with col3:
-        st.markdown("### 🧊 回檔股監控")
-        st.dataframe(run_monitor(st.session_state["pullback"]), use_container_width=True)
+        st.markdown("### 🔴 第三池")
+        st.dataframe(run_monitor(st.session_state["pool3"]), use_container_width=True)
