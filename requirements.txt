@@ -5,3 +5,5 @@ twstock
 pytz
 plotly
 streamlit-echarts
+mplfinance
+numpy
