@@ -248,10 +248,10 @@ if st.button("🔄 更新盤中監控"):
 
 
 # =========================================================================
-# 🎯 核心功能：選股池連動轉折 K 線圖 (自動動態鎖定「最近半年」)
+# 🎯 核心功能：選股池連動轉折 K 線圖 (自動動態鎖定「最近 3 個月」)
 # =========================================================================
 st.write("---")
-st.subheader("🎯 智慧選股連動看盤監測器")
+st.subheader("🎯 智慧選股連動看盤監測器 (最近 3 個月區間)")
 
 if "breakout" in st.session_state:
     pool_all = pd.concat([
@@ -272,12 +272,12 @@ if "breakout" in st.session_state:
     sel_ticker = pool_all[pool_all["代號"] == sel_code]["ticker"].values[0]
     sel_name = pool_all[pool_all["代號"] == sel_code]["名稱"].values[0]
     
-    # 自動計算包含今天在內，往前推半年的日期範圍
+    # 【已修改】自動計算包含今天在內，往前推 3 個月（90天）的日期範圍
     end_date = datetime.date.today()
-    start_date = end_date - datetime.timedelta(days=180)
+    start_date = end_date - datetime.timedelta(days=90)
 
     try:
-        with st.spinner(f'正在分析 {sel_code} {sel_name} 最近半年的轉折波浪軌跡...'):
+        with st.spinner(f'正在分析 {sel_code} {sel_name} 最近 3 個月的轉折波浪軌跡...'):
             df_k = yf.download(sel_ticker, start=start_date, end=end_date, progress=False)
             
         if not df_k.empty:
