@@ -4,9 +4,10 @@ import yfinance as yf
 import mplfinance as mpf
 import numpy as np
 import matplotlib.pyplot as plt
+from datetime import datetime, timedelta
 
 # 設定網頁標題
-st.title("📈 5MA 轉折波段自動標註系統")
+st.title("📈 5MA 轉折波段自動標註系統 (半年區間/多均線版)")
 
 # 讓使用者輸入股票代號
 stock_code = st.text_input("請輸入台灣股票代號 (例如: 3303):", "3303")
@@ -16,9 +17,9 @@ if not stock_code.endswith(".TW") and not stock_code.endswith(".TWO"):
 else:
     stock_id = stock_code
 
-# 設定查詢時間範圍 (縮短範圍讓K線大小剛好，像手機看盤一樣)
-start_date = "2025-11-01"
-end_date = "2026-05-30"
+# 【修改】設定查詢時間範圍：自動抓取當前日期往前推半年的時間
+end_date = datetime.today().strftime('%Y-%m-%d')
+start_date = (datetime.today() - timedelta(days=180)).strftime('%Y-%m-%d')
 
 @st.cache_data
 def load_data(ticker, start, end):
@@ -36,13 +37,21 @@ try:
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
 
-        # 1. 計算 5MA 並清洗資料
+        # 1. 計算 5MA, 10MA, 20MA(月線) 並清洗資料
         df['5MA'] = df['Close'].rolling(window=5).mean()
+        df['10MA'] = df['Close'].rolling(window=10).mean()
+        df['20MA'] = df['Close'].rolling(window=20).mean() # 月線
+
+        # 轉換數值型態
         df['Close'] = pd.to_numeric(df['Close'].iloc[:, 0] if isinstance(df['Close'], pd.DataFrame) else df['Close'], errors='coerce')
         df['High'] = pd.to_numeric(df['High'].iloc[:, 0] if isinstance(df['High'], pd.DataFrame) else df['High'], errors='coerce')
         df['Low'] = pd.to_numeric(df['Low'].iloc[:, 0] if isinstance(df['Low'], pd.DataFrame) else df['Low'], errors='coerce')
         df['5MA'] = pd.to_numeric(df['5MA'], errors='coerce')
-        df = df.dropna(subset=['Close', '5MA']).copy()
+        df['10MA'] = pd.to_numeric(df['10MA'], errors='coerce')
+        df['20MA'] = pd.to_numeric(df['20MA'], errors='coerce')
+        
+        # 剔除尚未算完均線的 NaN 欄位
+        df = df.dropna(subset=['Close', '5MA', '10MA', '20MA']).copy()
 
         # 2. 定義狀態與群組 (依據 5MA 交叉切分波段)
         df['State'] = np.where(df['Close'] > df['5MA'], 1, -1)
@@ -67,39 +76,61 @@ try:
                 continue
                 
             if state == 1:
-                # 【狀況一：站上5MA波段】
-                # 這個波段的「頭」在當前群組的最高點
+                # 【狀況一：站上5MA波段】最高點
                 highest_idx = group_data['High'].idxmax()
                 x_pos = df.index.get_loc(highest_idx)
                 y_pos = df.loc[highest_idx, 'High']
                 
-                # 記錄轉折點 (連線至此群組最高點)
                 zigzag_points.append((x_pos, y_pos))
-                
-                # 標記 H
                 df.loc[highest_idx, 'Label_Text'] = "H"
                 df.loc[highest_idx, 'Label_Pos'] = y_pos * 1.015
                 
             elif state == -1:
-                # 【狀況二：跌破5MA波段】
-                # 這個波段的「底」在當前群組的最低點
+                # 【狀況二：跌破5MA波段】最低點
                 lowest_idx = group_data['Low'].idxmin()
                 x_pos = df.index.get_loc(lowest_idx)
                 y_pos = df.loc[lowest_idx, 'Low']
                 
-                # 記錄轉折點 (連線至此群組最低點)
                 zigzag_points.append((x_pos, y_pos))
-                
-                # 標記 B
                 df.loc[lowest_idx, 'Label_Text'] = "B"
                 df.loc[lowest_idx, 'Label_Pos'] = y_pos * 0.985
+
+        # 【新增】計算均線趨勢方向（最新一天 vs 前一天）
+        latest_5ma = df['5MA'].iloc[-1]
+        prev_5ma = df['5MA'].iloc[-2]
+        trend_5ma = "往上" if latest_5ma >= prev_5ma else "往下"
+        delta_5ma = latest_5ma - prev_5ma
+
+        latest_10ma = df['10MA'].iloc[-1]
+        prev_10ma = df['10MA'].iloc[-2]
+        trend_10ma = "往上" if latest_10ma >= prev_10ma else "往下"
+        delta_10ma = latest_10ma - prev_10ma
+
+        latest_20ma = df['20MA'].iloc[-1]
+        prev_20ma = df['20MA'].iloc[-2]
+        trend_20ma = "往上" if latest_20ma >= prev_20ma else "往下"
+        delta_20ma = latest_20ma - prev_20ma
+
+        # 在畫面上呈現均線趨勢指標
+        st.subheader("🔮 最新均線趨勢方向")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric(label="5日均線 (5MA)", value=f"{latest_5ma:.2f}", delta=f"{delta_5ma:.2f} ({trend_5ma})")
+        with col2:
+            st.metric(label="10日均線 (10MA)", value=f"{latest_10ma:.2f}", delta=f"{delta_10ma:.2f} ({trend_10ma})")
+        with col3:
+            st.metric(label="月線 (20MA)", value=f"{latest_20ma:.2f}", delta=f"{delta_20ma:.2f} ({trend_20ma})")
 
         # 4. 繪製圖表
         mc = mpf.make_marketcolors(up='red', down='green', edge='inherit', wick='inherit', volume='in')
         s = mpf.make_mpf_style(marketcolors=mc, gridstyle='--')
 
-        # 橘色 5MA 線
-        plots = [mpf.make_addplot(df['5MA'], color='orange', width=1.2, label='5MA')]
+        # 【修改】多加 10MA 與 20MA 的繪圖參數
+        plots = [
+            mpf.make_addplot(df['5MA'], color='orange', width=1.2, label='5MA'),
+            mpf.make_addplot(df['10MA'], color='blue', width=1.2, label='10MA'),
+            mpf.make_addplot(df['20MA'], color='purple', width=1.2, label='20MA')
+        ]
 
         fig, axlist = mpf.plot(
             df, 
@@ -112,14 +143,14 @@ try:
         )
         
         main_ax = axlist[0] # K線主圖畫布
+        main_ax.legend(loc='upper left') # 顯示均線標籤說明
 
-        # 5. 【關鍵修正】把高點 H 與 低點 B 嚴格地高低交叉連起來！
+        # 5. 連接高低轉折點
         if len(zigzag_points) > 1:
             x_coords, y_coords = zip(*zigzag_points)
-            # 繪製深灰色鋸齒轉折折線 (zorder=3 確保它穿過 K 線)
             main_ax.plot(x_coords, y_coords, color='#666666', linestyle='-', linewidth=2.5, label='ZigZag Wave', zorder=3)
 
-        # 6. 標註 H 與 B 的黃色圓角標籤 (zorder=5 確保文字在最上層不被線遮擋)
+        # 6. 標註 H 與 B 的黃色圓角標籤
         for idx, row in df[df['Label_Text'] != ""].iterrows():
             x_pos = df.index.get_loc(idx)
             color = 'red' if row['Label_Text'] == "H" else 'green'
@@ -130,8 +161,9 @@ try:
             )
 
         # 網頁呈現
-        st.subheader(f"📊 {stock_id} 轉折波段與頭底連線圖表")
+        st.subheader(f" Bars：{start_date} 至 {end_date} 走勢圖")
         st.pyplot(fig)
 
 except Exception as e:
     st.error(f"程式執行過程中發生錯誤: {e}")
+    
