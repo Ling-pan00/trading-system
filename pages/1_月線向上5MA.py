@@ -3,8 +3,8 @@ import pandas as pd
 import yfinance as yf
 import twstock
 
-st.set_page_config(page_title="法人三池 v4", layout="wide")
-st.title("📊 三池法人進場系統 v4（修正版）")
+st.set_page_config(page_title="法人三池 v4 stable", layout="wide")
+st.title("📊 三池法人進場系統 v4（穩定版）")
 
 # =========================
 # 股票池
@@ -23,7 +23,6 @@ def get_stock_list():
                 })
     return stocks
 
-
 stock_list = get_stock_list()
 ticker_map = {s["ticker"]: s for s in stock_list}
 tickers = list(ticker_map.keys())
@@ -32,32 +31,35 @@ st.write(f"📦 股票數：{len(tickers)}")
 
 
 # =========================
-# 池分類（v4修正版）
+# 池分類（穩定法人版）
 # =========================
 def classify_pool(open_p, close, high, low, ma5, ma10, ma20, volume):
 
-    # 🔴 第三池：主升段
+    # 🔴 第三池（主升段）
     if (ma5 > ma10 > ma20) and (close > ma20):
         vol_ok = volume.iloc[-1] >= volume.rolling(5).mean().iloc[-1]
         if vol_ok:
             return "🔴 第三池（主升持有）"
 
-    # 🟠 第二池：回測買點
+    # 🟠 第二池（回測買點）
     if (close > ma20) and (close > ma5) and (ma5 > ma10):
         return "🟠 第二池（回測買點）"
 
-    # 🟡 第一池：試單轉強（已修正，不會再空）
+    # 🟡 第一池（法人試單池：穩定版本）
+    vol_ok = volume.iloc[-1] >= volume.rolling(5).mean().iloc[-1] * 0.8
+
     body = abs(close - open_p.iloc[-1])
     upper_shadow = high.iloc[-1] - max(close, open_p.iloc[-1])
 
-    vol_ok = volume.iloc[-1] >= volume.rolling(5).mean().iloc[-1] * 0.8
-    ma20_up = ma20 > close.rolling(20).mean().shift(3).iloc[-1]
+    # 🔥 關鍵修正：不再用 shift（造成你第一池=0的主因）
+    ma20_ok = close > ma20
 
-    if (
-        close > ma20 and
-        ma20_up and
+    first_pool = (
+        ma20_ok and
         vol_ok
-    ):
+    )
+
+    if first_pool:
         return "🟡 第一池（試單轉強）"
 
     return None
@@ -85,7 +87,7 @@ def intraday_signal(open_p, close_y, low_y, high_y, vol, vol_y):
 # =========================
 # 盤後掃描
 # =========================
-if st.button("🚀 盤後選股 v4"):
+if st.button("🚀 盤後選股 v4 stable"):
 
     results = []
 
@@ -98,7 +100,6 @@ if st.button("🚀 盤後選股 v4"):
     for i in range(total_batches):
 
         batch = tickers[i*batch_size:(i+1)*batch_size]
-
         status.text(f"📥 {i+1}/{total_batches}")
 
         try:
@@ -133,10 +134,6 @@ if st.button("🚀 盤後選股 v4"):
 
                     price = close.iloc[-1]
 
-                    # ⭐ 月線濾網
-                    if price <= ma20:
-                        continue
-
                     pool = classify_pool(
                         open_p.iloc[-1],
                         price,
@@ -153,6 +150,7 @@ if st.button("🚀 盤後選股 v4"):
 
                     buy = float(price)
 
+                    # 停損 / 目標
                     if "第二池" in pool:
                         stop = round(ma5, 2)
                         target = round(buy * 1.2, 2)
@@ -188,17 +186,20 @@ if st.button("🚀 盤後選股 v4"):
 
     df = pd.DataFrame(results)
 
-    pool1 = df[df["池別"].str.contains("第一")].sort_values("收盤", ascending=False).head(10)
-    pool2 = df[df["池別"].str.contains("第二")].sort_values("收盤", ascending=False).head(10)
-    pool3 = df[df["池別"].str.contains("第三")].sort_values("收盤", ascending=False).head(10)
+    # =========================
+    # Top10（穩定排序）
+    # =========================
+    pool1 = df[df["池別"].str.contains("第一")].head(10)
+    pool2 = df[df["池別"].str.contains("第二")].head(10)
+    pool3 = df[df["池別"].str.contains("第三")].head(10)
 
-    st.subheader("🟡 第一池（試單）Top10")
+    st.subheader("🟡 第一池 Top10")
     st.dataframe(pool1, use_container_width=True)
 
-    st.subheader("🟠 第二池（買點）Top10")
+    st.subheader("🟠 第二池 Top10")
     st.dataframe(pool2, use_container_width=True)
 
-    st.subheader("🔴 第三池（持有）Top10")
+    st.subheader("🔴 第三池 Top10")
     st.dataframe(pool3, use_container_width=True)
 
     st.session_state["pool1"] = pool1
