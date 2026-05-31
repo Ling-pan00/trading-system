@@ -4,7 +4,7 @@ import yfinance as yf
 import twstock
 
 st.set_page_config(page_title="法人三池 v4", layout="wide")
-st.title("📊 三池法人進場系統 v4（完整版）")
+st.title("📊 三池法人進場系統 v4（修正版）")
 
 # =========================
 # 股票池
@@ -23,6 +23,7 @@ def get_stock_list():
                 })
     return stocks
 
+
 stock_list = get_stock_list()
 ticker_map = {s["ticker"]: s for s in stock_list}
 tickers = list(ticker_map.keys())
@@ -31,7 +32,7 @@ st.write(f"📦 股票數：{len(tickers)}")
 
 
 # =========================
-# 池分類（v4核心）
+# 池分類（v4修正版）
 # =========================
 def classify_pool(open_p, close, high, low, ma5, ma10, ma20, volume):
 
@@ -41,30 +42,25 @@ def classify_pool(open_p, close, high, low, ma5, ma10, ma20, volume):
         if vol_ok:
             return "🔴 第三池（主升持有）"
 
-    # 🟠 第二池：最佳買點（回測）
+    # 🟠 第二池：回測買點
     if (close > ma20) and (close > ma5) and (ma5 > ma10):
         return "🟠 第二池（回測買點）"
 
-    # # 🟡 第一池（法人試單 - 修正版）
-body = abs(price - open_p.iloc[-1])
-upper_shadow = high.iloc[-1] - max(price, open_p.iloc[-1])
+    # 🟡 第一池：試單轉強（已修正，不會再空）
+    body = abs(close - open_p.iloc[-1])
+    upper_shadow = high.iloc[-1] - max(close, open_p.iloc[-1])
 
-# 量能改成穩定版（避免被 yf 洗掉）
-vol_ok = volume.iloc[-1] >= volume.rolling(5).mean().iloc[-1] * 0.8
+    vol_ok = volume.iloc[-1] >= volume.rolling(5).mean().iloc[-1] * 0.8
+    ma20_up = ma20 > close.rolling(20).mean().shift(3).iloc[-1]
 
-# MA20 趨勢放寬（避免太嚴）
-ma20_up = ma20 > close.rolling(20).mean().shift(3).iloc[-1]
+    if (
+        close > ma20 and
+        ma20_up and
+        vol_ok
+    ):
+        return "🟡 第一池（試單轉強）"
 
-first_pool = (
-    price > ma20 and
-    ma20_up and
-    vol_ok
-)
-
-if first_pool:
-    return "🟡 第一池（試單轉強）"
-
-
+    return None
 
 
 # =========================
@@ -192,9 +188,6 @@ if st.button("🚀 盤後選股 v4"):
 
     df = pd.DataFrame(results)
 
-    # =========================
-    # 法人 Top10（真正強度排序）
-    # =========================
     pool1 = df[df["池別"].str.contains("第一")].sort_values("收盤", ascending=False).head(10)
     pool2 = df[df["池別"].str.contains("第二")].sort_values("收盤", ascending=False).head(10)
     pool3 = df[df["池別"].str.contains("第三")].sort_values("收盤", ascending=False).head(10)
