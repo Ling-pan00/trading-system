@@ -1,76 +1,116 @@
+# app.py
+
+```python
+import streamlit as st
 import pandas as pd
-import numpy as np
+import yfinance as yf
+import twstock
 
-class ThreePoolEngine:
+st.set_page_config(page_title="三池獨立監控系統", layout="wide")
 
-    def __init__(self):
-        pass
+st.title("📊 三池獨立交易監控系統 Pro")
 
-    # =====================
-    # 技術指標
-    # =====================
-    def prepare(self, df):
+# =========================
+# 股票清單
+# =========================
+@st.cache_data(ttl=86400)
+def get_stock_list():
 
-        df = df.copy()
+    stocks = []
 
-        df["ma5"] = df["close"].rolling(5).mean()
-        df["ma10"] = df["close"].rolling(10).mean()
-        df["ma20"] = df["close"].rolling(20).mean()
+    for code, info in twstock.codes.items():
 
-        df["vol_ma20"] = (
-            df["volume"]
-            .rolling(20)
-            .mean()
-        )
+        if info.market in ["上市", "上櫃"]:
 
-        return df
+            if len(code) == 4 and code.isdigit():
 
-    # =====================
-    # 第一池
-    # =====================
-    def pool1(self, df):
+                ticker = (
+                    f"{code}.TW"
+                    if info.market == "上市"
+                    else f"{code}.TWO"
+                )
 
-        df = self.prepare(df)
+                stocks.append({
+                    "code": code,
+                    "name": info.name,
+                    "ticker": ticker
+                })
 
-        if len(df) < 30:
-            return False
+    return stocks
+
+
+stock_list = get_stock_list()
+
+ticker_map = {
+    s["ticker"]: s
+    for s in stock_list
+}
+
+tickers = list(ticker_map.keys())
+
+st.write(f"📦 股票數量：{len(tickers)}")
+
+
+# =========================
+# 三池策略
+# =========================
+def classify_pool(df):
+
+    try:
+
+        close = df["Close"]
+        volume = df["Volume"]
+        open_ = df["Open"]
+        high = df["High"]
+        low = df["Low"]
+
+        if len(close) < 30:
+            return None
+
+        ma5 = close.rolling(5).mean()
+        ma10 = close.rolling(10).mean()
+        ma20 = close.rolling(20).mean()
 
         ma20_up = (
-            df["ma20"].iloc[-1]
+            ma20.iloc[-1]
             >
-            df["ma20"].iloc[-2]
+            ma20.iloc[-2]
         )
 
+        # =====================
+        # 第一池
+        # =====================
+
         broke = (
-            (df["close"] < df["ma5"])
+            (close < ma5)
             .tail(10)
             .any()
         )
 
-        rebound = (
-            df["close"].iloc[-1]
+        first_rebound = (
+            close.iloc[-1]
             >
-            df["ma5"].iloc[-1]
+            ma5.iloc[-1]
         )
 
         vol_ok = (
-            df["volume"].iloc[-1]
+            volume.iloc[-1]
             >=
-            df["volume"].iloc[-2] * 0.8
+            volume.iloc[-2] * 0.8
         )
 
         body = abs(
-            df["close"].iloc[-1]
+            close.iloc[-1]
             -
-            df["open"].iloc[-1]
+            open_.iloc[-1]
         )
 
         upper_shadow = (
-            df["high"].iloc[-1]
+            high.iloc[-1]
             -
             max(
-                df["open"].iloc[-1],
-                df["close"].iloc[-1]
+                open_.iloc[-1],
+                close.iloc[-1]
             )
         )
 
@@ -78,311 +118,471 @@ class ThreePoolEngine:
             upper_shadow <= body * 1.5
         )
 
-        return all([
-            ma20_up,
-            broke,
-            rebound,
-            vol_ok,
-            shadow_ok
-        ])
-
-    # =====================
-    # 第二池
-    # =====================
-    def pool2(self, df):
-
-        df = self.prepare(df)
-
-        if len(df) < 30:
-            return False
-
-        ma20_up = (
-            df["ma20"].iloc[-1]
-            >
-            df["ma20"].iloc[-2]
+        pool1 = (
+            ma20_up
+            and broke
+            and first_rebound
+            and vol_ok
+            and shadow_ok
         )
 
-        trend = (
-            df["close"].iloc[-1]
-            >
-            df["ma5"].iloc[-1]
-        )
+        # =====================
+        # 第二池
+        # =====================
 
-        pullback = (
-            df["low"].iloc[-1]
+        pool2 = (
+
+            ma20_up
+
+            and
+
+            close.iloc[-1]
+            >
+            ma5.iloc[-1]
+
+            and
+
+            low.iloc[-1]
             <=
-            df["ma5"].iloc[-1] * 1.01
-        )
+            ma5.iloc[-1] * 1.01
 
-        hold = (
-            df["close"].iloc[-1]
-            >
-            df["ma5"].iloc[-1]
-        )
+            and
 
-        vol_ok = (
-            df["volume"].iloc[-1]
+            volume.iloc[-1]
             >=
-            df["volume"].iloc[-2] * 0.8
+            volume.iloc[-2] * 0.8
         )
 
-        return all([
-            ma20_up,
-            trend,
-            pullback,
-            hold,
-            vol_ok
-        ])
+        # =====================
+        # 第三池
+        # =====================
 
-    # =====================
-    # 第三池
-    # =====================
-    def pool3(self, df):
-
-        df = self.prepare(df)
-
-        if len(df) < 30:
-            return False
-
-        ma20_up = (
-            df["ma20"].iloc[-1]
-            >
-            df["ma20"].iloc[-2]
-        )
-
-        trend = (
-            df["close"].iloc[-1]
-            >
-            df["ma20"].iloc[-1]
-        )
-
-        structure = (
-            df["ma5"].iloc[-1]
-            >
-            df["ma10"].iloc[-1]
-            >
-            df["ma20"].iloc[-1]
-        )
-
-        not_break = (
-            df["close"].iloc[-1]
-            >
-            df["ma10"].iloc[-1]
-        )
-
-        volume_ratio = (
-            df["volume"].iloc[-1]
-            /
-            max(df["vol_ma20"].iloc[-1], 1)
+        vol_ma20 = (
+            volume
+            .rolling(20)
+            .mean()
         )
 
         body_pct = (
             (
-                df["close"].iloc[-1]
+                close.iloc[-1]
                 -
-                df["open"].iloc[-1]
+                open_.iloc[-1]
             )
             /
-            df["open"].iloc[-1]
+            open_.iloc[-1]
         )
 
-        not_exhaust = not (
-            body_pct > 0.09
-            and
-            volume_ratio > 3
-        )
-
-        return all([
-            ma20_up,
-            trend,
-            structure,
-            not_break,
-            not_exhaust
-        ])
-
-    # =====================
-    # 排名
-    # =====================
-
-    def score_pool1(self, df):
-
-        df = self.prepare(df)
-
-        return (
-            df["volume"].iloc[-1]
+        volume_ratio = (
+            volume.iloc[-1]
             /
             max(
-                df["vol_ma20"].iloc[-1],
+                vol_ma20.iloc[-1],
                 1
             )
         )
 
-    def score_pool2(self, df):
+        not_exhaust = not (
+            body_pct > 0.07
+            and
+            volume_ratio > 2
+        )
 
-        df = self.prepare(df)
+        pool3 = (
 
-        return (
-            1
-            /
-            (
-                abs(
-                    df["close"].iloc[-1]
-                    /
-                    df["ma5"].iloc[-1]
-                    - 1
-                )
-                + 0.001
+            ma20_up
+
+            and
+
+            close.iloc[-1]
+            >
+            ma20.iloc[-1]
+
+            and
+
+            ma5.iloc[-1]
+            >
+            ma10.iloc[-1]
+            >
+            ma20.iloc[-1]
+
+            and
+
+            close.iloc[-1]
+            >
+            ma10.iloc[-1]
+
+            and
+
+            not_exhaust
+        )
+
+        if pool3:
+            return "🔴 第三池"
+
+        elif pool2:
+            return "🟠 第二池"
+
+        elif pool1:
+            return "🟡 第一池"
+
+        return None
+
+    except:
+        return None
+
+
+# =========================
+# 盤中訊號
+# =========================
+def intraday_signal(
+    open_p,
+    close_y,
+    low_y,
+    high_y,
+    vol,
+    vol_y
+):
+
+    strong = open_p >= close_y
+
+    hold = open_p >= low_y
+
+    vol_ok = vol >= vol_y * 0.7
+
+    breakout = open_p > high_y
+
+    if strong and hold and vol_ok:
+
+        if breakout:
+            return "🟢 BUY（追強）"
+
+        return "🟢 BUY（回測）"
+
+    if hold:
+        return "🟡 WATCH"
+
+    return "🔴 NO"
+
+
+# =========================
+# 盤後選股
+# =========================
+if st.button("🚀 盤後選股"):
+
+    results = []
+
+    batch_size = 200
+
+    total_batches = (
+        len(tickers)
+        + batch_size
+        - 1
+    ) // batch_size
+
+    progress = st.progress(0)
+
+    status = st.empty()
+
+    for i in range(total_batches):
+
+        batch = tickers[
+            i*batch_size:(i+1)*batch_size
+        ]
+
+        status.text(
+            f"📥 {i+1}/{total_batches}"
+        )
+
+        try:
+
+            data = yf.download(
+                tickers=batch,
+                period="3mo",
+                interval="1d",
+                group_by="ticker",
+                progress=False,
+                threads=True,
+                auto_adjust=False
             )
+
+            for t in batch:
+
+                try:
+
+                    df_s = data[t]
+
+                    if df_s.empty:
+                        continue
+
+                    close = df_s["Close"]
+
+                    low = df_s["Low"]
+
+                    if len(close) < 30:
+                        continue
+
+                    pool = classify_pool(df_s)
+
+                    if pool is None:
+                        continue
+
+                    ma5 = (
+                        close
+                        .rolling(5)
+                        .mean()
+                        .iloc[-1]
+                    )
+
+                    ma10 = (
+                        close
+                        .rolling(10)
+                        .mean()
+                        .iloc[-1]
+                    )
+
+                    buy = float(
+                        close.iloc[-1]
+                    )
+
+                    if pool == "🟡 第一池":
+
+                        stop = float(
+                            low.iloc[-1]
+                        )
+
+                        target = round(
+                            buy * 1.15,
+                            2
+                        )
+
+                    elif pool == "🟠 第二池":
+
+                        stop = round(
+                            ma5,
+                            2
+                        )
+
+                        target = round(
+                            buy * 1.20,
+                            2
+                        )
+
+                    else:
+
+                        stop = round(
+                            ma10,
+                            2
+                        )
+
+                        target = round(
+                            buy * 1.25,
+                            2
+                        )
+
+                    results.append({
+
+                        "代號":
+                        ticker_map[t]["code"],
+
+                        "名稱":
+                        ticker_map[t]["name"],
+
+                        "ticker":
+                        t,
+
+                        "池別":
+                        pool,
+
+                        "收盤":
+                        round(buy, 2),
+
+                        "買進價":
+                        round(buy, 2),
+
+                        "停損價":
+                        stop,
+
+                        "目標價":
+                        target
+
+                    })
+
+                except:
+                    continue
+
+        except:
+            continue
+
+        progress.progress(
+            (i+1)/total_batches
         )
 
-    def score_pool3(self, df):
+    status.text("✅ 完成")
 
-        if len(df) < 20:
-            return 0
+    df = pd.DataFrame(results)
 
-        return (
-            df["close"].iloc[-1]
-            /
-            df["close"].iloc[-20]
-            - 1
-        )
+    pool1_df = (
+        df[df["池別"] == "🟡 第一池"]
+        .head(10)
+    )
 
-    # =====================
-    # 進出場
-    # =====================
+    pool2_df = (
+        df[df["池別"] == "🟠 第二池"]
+        .head(10)
+    )
 
-    def trade_plan(self, pool, df):
+    pool3_df = (
+        df[df["池別"] == "🔴 第三池"]
+        .head(10)
+    )
 
-        df = self.prepare(df)
+    st.session_state["pool1"] = pool1_df
+    st.session_state["pool2"] = pool2_df
+    st.session_state["pool3"] = pool3_df
 
-        buy = df["close"].iloc[-1]
+    st.subheader("🟡 第一池 Top10")
+    st.dataframe(
+        pool1_df,
+        use_container_width=True
+    )
 
-        if pool == 1:
+    st.subheader("🟠 第二池 Top10")
+    st.dataframe(
+        pool2_df,
+        use_container_width=True
+    )
 
-            stop = df["low"].iloc[-1]
+    st.subheader("🔴 第三池 Top10")
+    st.dataframe(
+        pool3_df,
+        use_container_width=True
+    )
 
-            risk = buy - stop
 
-            target = buy + risk * 2
+# =========================
+# 盤中監控
+# =========================
+st.subheader("📈 盤中三池監控")
 
-        elif pool == 2:
 
-            stop = df["ma5"].iloc[-1]
+def run_monitor(df):
 
-            risk = buy - stop
+    live = []
 
-            target = buy + risk * 2.5
+    for _, row in df.iterrows():
 
-        else:
+        try:
 
-            stop = df["ma10"].iloc[-1]
+            t = row["ticker"]
 
-            risk = buy - stop
+            data = yf.download(
+                t,
+                period="5d",
+                interval="1d",
+                progress=False
+            )
 
-            target = buy + risk * 3
+            close = data["Close"]
+            volume = data["Volume"]
+            open_p = data["Open"]
+            high = data["High"]
+            low = data["Low"]
 
-        return {
-            "買進價": round(buy, 2),
-            "停損價": round(stop, 2),
-            "目標價": round(target, 2)
-        }
+            open_now = open_p.iloc[-1]
 
-    # =====================
-    # 全市場掃描
-    # =====================
+            close_y = close.iloc[-2]
 
-    def scan_market(self, market_dict):
+            low_y = low.min()
 
-        pool1_list = []
-        pool2_list = []
-        pool3_list = []
+            high_y = high.max()
 
-        for stock, df in market_dict.items():
+            vol = volume.iloc[-1]
 
-            try:
+            vol_y = (
+                volume
+                .rolling(5)
+                .mean()
+                .iloc[-1]
+            )
 
-                if len(df) < 60:
-                    continue
+            sig = intraday_signal(
+                open_now,
+                close_y,
+                low_y,
+                high_y,
+                vol,
+                vol_y
+            )
 
-                close = df["close"].iloc[-1]
-                volume = df["volume"].iloc[-1]
+            live.append({
 
-                # 流動性過濾
-                if close < 20:
-                    continue
+                "代號":
+                row["代號"],
 
-                if volume < 1000:
-                    continue
+                "名稱":
+                row["名稱"],
 
-                if self.pool3(df):
+                "池別":
+                row["池別"],
 
-                    score = self.score_pool3(df)
+                "訊號":
+                sig
 
-                    pool3_list.append(
-                        (stock, score, df)
-                    )
-
-                elif self.pool2(df):
-
-                    score = self.score_pool2(df)
-
-                    pool2_list.append(
-                        (stock, score, df)
-                    )
-
-                elif self.pool1(df):
-
-                    score = self.score_pool1(df)
-
-                    pool1_list.append(
-                        (stock, score, df)
-                    )
-
-            except Exception:
-                continue
-
-        pool1_list = sorted(
-            pool1_list,
-            key=lambda x: x[1],
-            reverse=True
-        )[:10]
-
-        pool2_list = sorted(
-            pool2_list,
-            key=lambda x: x[1],
-            reverse=True
-        )[:10]
-
-        pool3_list = sorted(
-            pool3_list,
-            key=lambda x: x[1],
-            reverse=True
-        )[:10]
-
-        return {
-            "第一池": self.make_table(1, pool1_list),
-            "第二池": self.make_table(2, pool2_list),
-            "第三池": self.make_table(3, pool3_list)
-        }
-
-    # =====================
-    # 輸出表
-    # =====================
-
-    def make_table(self, pool, data):
-
-        rows = []
-
-        for stock, score, df in data:
-
-            plan = self.trade_plan(pool, df)
-
-            rows.append({
-                "股票": stock,
-                "分數": round(score, 2),
-                "買進價": plan["買進價"],
-                "停損價": plan["停損價"],
-                "目標價": plan["目標價"]
             })
 
-        return pd.DataFrame(rows)
+        except:
+            continue
+
+    return pd.DataFrame(live)
+
+
+if st.button("🔄 更新盤中監控"):
+
+    if "pool1" not in st.session_state:
+
+        st.warning("請先執行盤後選股")
+
+        st.stop()
+
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+
+        st.markdown(
+            "### 🟡 第一池"
+        )
+
+        st.dataframe(
+            run_monitor(
+                st.session_state["pool1"]
+            ),
+            use_container_width=True
+        )
+
+    with col2:
+
+        st.markdown(
+            "### 🟠 第二池"
+        )
+
+        st.dataframe(
+            run_monitor(
+                st.session_state["pool2"]
+            ),
+            use_container_width=True
+        )
+
+    with col3:
+
+        st.markdown(
+            "### 🔴 第三池"
+        )
+
+        st.dataframe(
+            run_monitor(
+                st.session_state["pool3"]
+            ),
+            use_container_width=True
+        )
+```
