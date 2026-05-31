@@ -65,7 +65,7 @@ def score(price, ma5, ma10, ma20, vol, vol_ma5, change_pct):
 
 
 # =========================
-# 四池分類（穩定版）
+# 四池分類
 # =========================
 def classify_pool(s, df, price, ma5, ma10, ma20, open_price):
 
@@ -108,12 +108,23 @@ def classify_pool(s, df, price, ma5, ma10, ma20, open_price):
         if pool2:
             return "🟠 第二池"
 
-        # 🟡 第一池
+        # 🟡 第一池（已加入突破前一日高點）
         if len(df) >= 15:
             was_below_ma5 = (df["Close"].iloc[-15:] < df["ma5"].iloc[-15:]).any()
             reclaim_ma5 = price > ma5
 
-            pool1 = ma20_up and above_ma20 and was_below_ma5 and reclaim_ma5 and red_k
+            # ✅ 新增：突破前一日高點
+            prev_high_break = price > df["High"].iloc[-2]
+
+            pool1 = (
+                ma20_up and
+                above_ma20 and
+                was_below_ma5 and
+                reclaim_ma5 and
+                red_k and
+                prev_high_break
+            )
+
             if pool1:
                 return "🟡 第一池"
 
