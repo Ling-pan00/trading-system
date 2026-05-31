@@ -77,17 +77,21 @@ def classify_pool(s, df, price, ma5, ma10, ma20, open_price):
     if len(ma20_series) < 5:
         return None
 
-    # 🟡 第一池（你新規則）
+    # =========================
+    # 🟡 第一池（修正版）
+    # =========================
+
     ma20_up = df["ma20"].iloc[-1] >= df["ma20"].iloc[-5]
+    above_ma20 = price > ma20
+
     washed = (df["Close"].tail(15) < df["ma5"].tail(15)).any()
     reclaim_ma5 = price > ma5
     red_k = price > open_price
 
-    pool1 = ma20_up and washed and reclaim_ma5 and red_k
+    pool1 = ma20_up and above_ma20 and washed and reclaim_ma5 and red_k
 
     # 🟠 第二池
     month_up = ma20_series.iloc[-1] > ma20_series.iloc[-min(5, len(ma20_series))]
-    above_ma20 = price > ma20
     pool2 = month_up and above_ma20 and s >= 4
 
     # 🔵 第三池
@@ -96,6 +100,7 @@ def classify_pool(s, df, price, ma5, ma10, ma20, open_price):
     # 🔴 第四池
     accel = df["Close"].pct_change().tail(3).mean() > 0
     vol_break = df["Volume"].iloc[-1] > df["vol_ma5"].iloc[-1]
+
     pool4 = month_up and above_ma20 and (ma5 > ma10 > ma20) and s >= 6 and accel and vol_break
 
     if pool4:
@@ -240,7 +245,7 @@ if st.button("🚀 盤後選股"):
 
 
 # =========================
-# 📈 盤中監控（補回）
+# 📈 盤中監控
 # =========================
 st.subheader("📈 盤中監控")
 
