@@ -4,12 +4,13 @@ import yfinance as yf
 import mplfinance as mpf
 import numpy as np
 import twstock
+from datetime import datetime, timedelta
 
-# --- 設定 ---
-st.set_page_config(page_title="三池強力監控系統 Pro", layout="wide")
-st.title("🚀 三池強力監控系統 Pro")
+# --- 頁面配置 ---
+st.set_page_config(page_title="三池強力監控系統", layout="wide")
+st.title("🚀 三池強力監控系統")
 
-# --- 1. 資料處理 ---
+# --- 1. 資料處理與選股引擎 ---
 @st.cache_data(ttl=86400)
 def get_stock_list():
     stocks = []
@@ -22,95 +23,75 @@ def get_stock_list():
 def get_zigzag_points(df):
     df['5MA'] = df['Close'].rolling(5).mean()
     df['State'] = np.where(df['Close'] > df['5MA'], 1, -1)
-    df['Change'] = df['State'] != df['State'].shift()
+    df['State_Group'] = (df['State'] != df['State'].shift()).cumsum()
     points = []
-    for i in range(20, len(df)):
-        if df['Change'].iloc[i]:
-            segment = df.iloc[max(0, i-20):i]
-            if df['State'].iloc[i] == -1:
-                idx = segment['High'].idxmax()
-                points.append((idx, segment['High'].max(), "H"))
-            else:
-                idx = segment['Low'].idxmin()
-                points.append((idx, segment['Low'].min(), "B"))
+    for g_id, group in df.groupby('State_Group'):
+        if g_id <= 2: continue
+        state = group['State'].iloc[0]
+        if state == 1:
+            idx = group['High'].idxmax()
+            points.append((df.index.get_loc(idx), df.loc[idx, 'High'], "H"))
+        else:
+            idx = group['Low'].idxmin()
+            points.append((df.index.get_loc(idx), df.loc[idx, 'Low'], "B"))
     return points
 
-# --- 2. 核心邏輯 ---
-if "breakout" not in st.session_state: st.session_state["breakout"] = pd.DataFrame()
+# --- 2. 介面與邏輯 ---
 tickers = [s["ticker"] for s in get_stock_list()]
 ticker_map = {s["ticker"]: s for s in get_stock_list()}
 
 if st.button("🚀 執行強力選股"):
     results = []
     with st.spinner("掃描市場動能中..."):
-        for t in tickers[:150]:
+        for t in tickers[:100]: # 限制數量以提升速度
             try:
                 df = yf.download(t, period="3mo", progress=False)
                 if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
                 if len(df) < 20: continue
                 c, ma5 = float(df["Close"].iloc[-1]), df["Close"].rolling(5).mean().iloc[-1]
-                vol_ma5, pct = df["Volume"].rolling(5).mean().iloc[-1], float((df["Close"].iloc[-1] - df["Close"].iloc[-2]) / df["Close"].iloc[-2] * 100)
-                s = (2 if c > ma5 else 0) + (3 if df["Volume"].iloc[-1] > vol_ma5 * 1.5 else 1) + (2 if pct > 2 else 0)
-                pool = "🚀 突破股" if s >= 7 else "🟡 動能股" if s >= 4 else "🧊 回檔股"
-                results.append({"代號": ticker_map[t]["code"], "名稱": ticker_map[t]["name"], "ticker": t, "分數": s, "池別": pool})
+                pct = float((df["Close"].iloc[-1] - df["Close"].iloc[-2]) / df["Close"].iloc[-2] * 100)
+                s = (2 if c > ma5 else 0) + (2 if pct > 2 else 0)
+                if s >= 3: results.append({"代號": ticker_map[t]["code"], "名稱": ticker_map[t]["name"], "ticker": t, "分數": s})
             except: continue
-    if results:
-        df = pd.DataFrame(results)
-        for p, k in [("🚀 突破股", "breakout"), ("🟡 動能股", "momentum"), ("🧊 回檔股", "pullback")]:
-            st.session_state[k] = df[df["池別"] == p].sort_values("分數", ascending=False).head(5)
+    st.session_state["results"] = pd.DataFrame(results)
 
-# --- 3. 介面與顯示 ---
-if not st.session_state["breakout"].empty:
-    pools = {"🚀 突破股": "breakout", "🟡 動能股": "momentum", "🧊 回檔股": "pullback"}
+if "results" in st.session_state and not st.session_state["results"].empty:
+    sel = st.selectbox("分析個股：", st.session_state["results"]["代號"].tolist())
+    ticker = st.session_state["results"][st.session_state["results"]["代號"] == sel]["ticker"].values[0]
     
-    cols = st.columns(3)
-    for i, (label, key) in enumerate(pools.items()):
-        cols[i].subheader(label)
-        cols[i].dataframe(st.session_state[key][["代號", "名稱", "分數"]], use_container_width=True, hide_index=True)
+    # 載入詳細 K 線數據
+    df = yf.download(ticker, period="3mo", progress=False)
+    if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
+    df['5MA'], df['10MA'], df['20MA'] = df['Close'].rolling(5).mean(), df['Close'].rolling(10).mean(), df['Close'].rolling(20).mean()
 
-    st.write("---")
-    st.subheader("📈 盤中動能監控")
-    if st.button("🔄 更新訊號"):
-        for label, key in pools.items():
-            st.markdown(f"**{label}**")
-            live = []
-            for _, row in st.session_state[key].iterrows():
-                try:
-                    d = yf.download(row["ticker"], period="5d", progress=False)
-                    if d.empty: continue
-                    if isinstance(d.columns, pd.MultiIndex): d.columns = d.columns.get_level_values(0)
-                    sig = "🟢 BUY" if d["Open"].iloc[-1] >= d["Close"].iloc[-2] else "🟡 WATCH"
-                    live.append({"代號": row["代號"], "訊號": sig})
-                except: continue
-            if live: st.dataframe(pd.DataFrame(live), use_container_width=True, hide_index=True)
+    # --- 使用你成功的 HTML 看板排版 ---
+    def get_ma_details(col):
+        now, pre = df[col].iloc[-1], df[col].iloc[-2]
+        return f"{now:.2f} {'▲' if now >= pre else '▼'}"
 
-    st.write("---")
-    st.subheader("🎯 轉折監測器")
-    pool_all = pd.concat([st.session_state[k] for k in pools.values()]).drop_duplicates(subset=['ticker'])
-    sel = st.selectbox("分析個股：", pool_all["代號"].tolist())
-    ticker = pool_all[pool_all["代號"] == sel]["ticker"].values[0]
+    st.markdown(f"""
+        <div style="background-color: #f8f9fa; padding: 15px; border-radius: 8px; border-left: 5px solid #6c757d; font-family: monospace; font-size: 16px; font-weight: bold;">
+            <span style="color: #FF9800; margin-right: 20px;">5MA: {get_ma_details('5MA')}</span>
+            <span style="color: #2196F3; margin-right: 20px;">10MA: {get_ma_details('10MA')}</span>
+            <span style="color: #9C27B0;">20MA: {get_ma_details('20MA')}</span>
+        </div>
+    """, unsafe_allow_html=True)
+
+    # --- 繪圖區 ---
+    mc = mpf.make_marketcolors(up='red', down='green', edge='inherit', wick='inherit', volume='in')
+    style = mpf.make_mpf_style(marketcolors=mc, gridstyle='--')
+    plots = [mpf.make_addplot(df[m], color=c) for m, c in zip(['5MA','10MA','20MA'], ['orange','blue','purple'])]
     
-    df_k = yf.download(ticker, period="3mo", progress=False)
-    if isinstance(df_k.columns, pd.MultiIndex): df_k.columns = df_k.columns.get_level_values(0)
-    df_k['5MA'], df_k['10MA'], df_k['20MA'] = df_k['Close'].rolling(5).mean(), df_k['Close'].rolling(10).mean(), df_k['Close'].rolling(20).mean()
-    
-    l, p = df_k.iloc[-1], df_k.iloc[-2]
-    c1, c2, c3 = st.columns(3)
-    c1.metric("5MA", f"{l['5MA']:.2f}", "▲" if l['5MA'] > p['5MA'] else "▼")
-    c2.metric("10MA", f"{l['10MA']:.2f}", "▲" if l['10MA'] > p['10MA'] else "▼")
-    c3.metric("20MA", f"{l['20MA']:.2f}", "▲" if l['20MA'] > p['20MA'] else "▼")
-    
-    ap = [mpf.make_addplot(df_k[m].iloc[-90:], color=c) for m, c in zip(['5MA','10MA','20MA'], ['orange','blue','purple'])]
-    fig, axlist = mpf.plot(df_k.iloc[-90:], type='candle', returnfig=True, volume=True, figsize=(10, 6), addplot=ap)
+    fig, axlist = mpf.plot(df, type='candle', style=style, addplot=plots, returnfig=True, figsize=(10, 6), volume=True)
     ax = axlist[0]
     
-    points = get_zigzag_points(df_k)
-    x = [df_k.index.get_loc(p[0]) for p in points if p[0] in df_k.iloc[-90:].index]
-    y = [p[1] for p in points if p[0] in df_k.iloc[-90:].index]
-    if len(x) > 1: ax.plot(x, y, color='gray', linewidth=1.2, zorder=2)
-    for idx, val, lbl in points:
-        if idx in df_k.iloc[-90:].index:
-            ax.annotate(lbl, (df_k.index.get_loc(idx), val), xytext=(0, 8 if lbl=='H' else -8), 
-                        textcoords='offset points', ha='center', color='red' if lbl=='H' else 'green',
-                        weight='bold', bbox=dict(fc="white", ec='gray', pad=0.5), zorder=10)
+    # 繪製轉折線與點
+    points = get_zigzag_points(df)
+    x = [p[0] for p in points]
+    y = [p[1] for p in points]
+    if len(x) > 1: ax.plot(x, y, color='black', alpha=0.4, linewidth=1, zorder=3)
+    for x_pos, val, lbl in points:
+        ax.text(x_pos, val, lbl, color='red' if lbl=="H" else 'green', weight='bold', ha='center', 
+                bbox=dict(boxstyle="circle,pad=0.1", fc="yellow", ec="none", alpha=0.6))
+    
     st.pyplot(fig)
