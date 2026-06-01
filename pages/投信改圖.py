@@ -6,73 +6,68 @@ import numpy as np
 from datetime import datetime, timedelta
 import pytz
 
-# 設定頁面與時區
-st.set_page_config(page_title="565檔投信鎖碼系統", layout="wide")
-tw_tz = pytz.timezone('Asia/Taipei')
+st.set_page_config(page_title="投信鎖碼系統", layout="wide")
 
-st.title("🏛️ 策略三：565檔投信鎖碼核心選股系統")
-
-# 初始化 Session State
+# 初始化
 if 'sitc_stock_cache' not in st.session_state: st.session_state.sitc_stock_cache = {}
 if 'sitc_report_df' not in st.session_state: st.session_state.sitc_report_df = None
 
-# ==========================================
-# 1. 完整的 565 檔清單函數
-# ==========================================
+# 請確保您的 565 檔清單完整
 def get_full_stock_pool():
-    # 請將您原始的那 565 檔完整的 List 貼在這裡
-    # 確保每個元素都是 'XXXX.TW' 或 'XXXX.TWO' 的格式
-    return ["2330.TW", "2454.TW", "2317.TW", ...] # (請將您原本的那 565 檔清單貼入此處)
+    # 這裡放您的完整 565 檔
+    return ["2330.TW", "2454.TW", "2317.TW", "3008.TW", "2303.TW", "2308.TW"] # 請務必補齊您的 565 檔
 
-# ==========================================
-# 2. 掃描與運算核心
-# ==========================================
-if st.button("🚀 啟動 565 檔全產業深度掃描", type="primary"):
+st.title("🏛️ 565 檔投信鎖碼系統")
+
+if st.button("🚀 開始掃描 (請確認清單已填寫)"):
     pool = get_full_stock_pool()
-    progress = st.progress(0)
+    start_dt = (datetime.now() - timedelta(days=150)).strftime("%Y-%m-%d")
     
-    # 執行與您原始邏輯一致的下載與過濾
-    # [此處運行您的篩選條件：投信連買、雙線、週轉率]
-    # 將符合條件的 DataFrame 存入 st.session_state.sitc_stock_cache
-    st.success("掃描完成")
-
-# ==========================================
-# 3. mplfinance 轉折標註 K 線圖
-# ==========================================
-if st.session_state.sitc_report_df is not None:
-    active_stocks = st.session_state.sitc_report_df['股票代碼'].tolist()
-    user_pick = st.selectbox("👉 選擇個股進行轉折分析：", options=active_stocks)
-    
-    if user_pick in st.session_state.sitc_stock_cache:
-        df = st.session_state.sitc_stock_cache[user_pick].tail(120).copy()
+    # 下載數據
+    with st.spinner("正在下載數據..."):
+        df_raw = yf.download(pool, start=start_dt, progress=False)
         
-        # --- 轉折邏輯 (ZigZag) ---
-        df['State'] = np.where(df['Close'] > df['MA5'], 1, -1)
-        df['State_Group'] = (df['State'] != df['State'].shift()).cumsum()
-        
-        zigzag_points = []
-        for g_id, group in df.groupby('State_Group'):
-            if group['State'].iloc[0] == 1:
-                idx = group['High'].idxmax()
-                zigzag_points.append((df.index.get_loc(idx), df.loc[idx, 'High']))
-            else:
-                idx = group['Low'].idxmin()
-                zigzag_points.append((df.index.get_loc(idx), df.loc[idx, 'Low']))
-
-        # --- 繪圖 ---
-        mc = mpf.make_marketcolors(up='red', down='green', edge='inherit', wick='inherit')
-        s = mpf.make_mpf_style(marketcolors=mc)
-        addplots = [
-            mpf.make_addplot(df['MA5'], color='orange'),
-            mpf.make_addplot(df['MA20'], color='purple'),
-            mpf.make_addplot(df['MA60'], color='blue')
-        ]
-        
-        fig, axlist = mpf.plot(df, type='candle', style=s, addplot=addplots, returnfig=True, figsize=(10, 6))
-        
-        # 連接轉折點
-        if len(zigzag_points) > 1:
-            x, y = zip(*zigzag_points)
-            axlist[0].plot(x, y, color='black', alpha=0.5, linewidth=1.5)
+    results = []
+    # 針對每一檔進行篩選
+    for s in pool:
+        try:
+            # 取得該檔數據
+            df = df_raw.xs(s, axis=1, level=1) if isinstance(df_raw.columns, pd.MultiIndex) else df_raw
+            df = df.dropna()
+            if len(df) < 60: continue
             
-        st.pyplot(fig)
+            # 計算指標
+            df['MA5'] = df['Close'].rolling(5).mean()
+            df['MA20'] = df['Close'].rolling(20).mean()
+            df['MA60'] = df['Close'].rolling(60).mean()
+            
+            # 策略：站穩月季線 (簡單範例)
+            last = df.iloc[-1]
+            if last['Close'] > last['MA20'] and last['Close'] > last['MA60']:
+                st.session_state.sitc_stock_cache[s] = df
+                results.append({'股票代碼': s, '收盤': round(last['Close'], 2)})
+        except: continue
+        
+    st.session_state.sitc_report_df = pd.DataFrame(results)
+    st.rerun()
+
+# 顯示結果與繪圖
+if st.session_state.sitc_report_df is not None and not st.session_state.sitc_report_df.empty:
+    st.write(f"共找到 {len(st.session_state.sitc_report_df)} 檔符合條件")
+    ticker = st.selectbox("選擇個股：", st.session_state.sitc_report_df['股票代碼'])
+    
+    df = st.session_state.sitc_stock_cache[ticker].copy()
+    
+    # 轉折標註邏輯
+    df['State'] = np.where(df['Close'] > df['MA5'], 1, -1)
+    df['Label'] = np.where(df['State'] != df['State'].shift(), np.where(df['State'] == 1, 'H', 'B'), np.nan)
+    
+    # 繪圖
+    mc = mpf.make_marketcolors(up='red', down='green')
+    s = mpf.make_mpf_style(marketcolors=mc)
+    addplots = [mpf.make_addplot(df['MA5'], color='orange'), mpf.make_addplot(df['MA20'], color='purple')]
+    
+    fig, axlist = mpf.plot(df.tail(60), type='candle', style=s, addplot=addplots, returnfig=True)
+    st.pyplot(fig)
+else:
+    st.warning("目前沒有符合條件的股票，請確認掃描是否完成。")
