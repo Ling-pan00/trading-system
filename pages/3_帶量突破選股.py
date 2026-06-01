@@ -1,19 +1,16 @@
 import streamlit as st
 import pandas as pd
 import yfinance as yf
-from datetime import datetime, timedelta
 import numpy as np
 import matplotlib.pyplot as plt
 import mplfinance as mpf
 
-# 頁面設定
-st.set_page_config(page_title="全量強勢選股系統", layout="wide")
-st.title("📊 565 檔強勢帶量突破選股系統")
+st.set_page_config(page_title="強勢股選股系統", layout="wide")
+st.title("📊 565 檔強勢帶量突破系統")
 
-# 1. 完整 565 檔清單
-@st.cache_data
-def get_industry_stock_pool():
-    # 這裡放完整的 565 檔
+# 1. 股票清單
+def get_pool():
+    # 這份清單包含所有標的
     return [
         "1503.TW", "1504.TW", "1513.TW", "1514.TW", "1519.TW", "1521.TW", "1522.TW", "1524.TW", "1525.TW", "1526.TW",
         "1527.TW", "1528.TW", "1529.TW", "1530.TW", "1531.TW", "1532.TW", "1533.TW", "1535.TW", "1536.TW", "1537.TW",
@@ -43,4 +40,6 @@ def get_industry_stock_pool():
         "2354.TW", "2355.TW", "2359.TW", "2360.TW", "2383.TW", "2423.TW", "2461.TW", "2464.TW", "2474.TW", "2482.TW",
         "2491.TWO", "3023.TW", "3030.TW", "3138.TW", "3209.TW", "3211.TWO", "3288.TWO", "3312.TW", "3406.TW", "3548.TWO",
         "3550.TW", "3580.TWO", "3596.TW", "3622.TW", "3645.TW", "3669.TW", "4541.TWO", "4551.TWO", "4906.TW", "5225.TW",
-        "5443.TWO", "5490.TWO", "6115.TW", "613
+        "5443.TWO", "5490.TWO", "6115.TW", "6139.TW", "6153.TW", "6176.TW", "6184.TWO", "6205.TW", "6213.TW", "6220.TWO",
+        "2340.TW", "2349.TW", "2374.TW", "2393.TW", "2406.TW", "2409.TW", "2426.TW", "2438.TW", "2448.TWO", "2489.TW",
+        "3008.TW", "3019.TW", "3031.TW", "3038.TW", "3049.TW", "3050.TW", "3051.TW", "305
