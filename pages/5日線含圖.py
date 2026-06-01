@@ -372,12 +372,12 @@ for pool_name in ["🔴 第四池", "🔵 第三池", "🟠 第二池", "🟡 �
                         st.rerun()
 
             with sel_col:
-                # 🔥 關鍵修正：將它的 Key 綁定當前的 index 值，index 一變，這個元件就會被強制重新建立並同步！
+                # 🔥【修復線】修正了外雙引號、內單引號的寫法，解決程式卡死問題
                 selected_stock = st.selectbox(
                     f"選擇股票：", 
                     stock_options, 
                     index=st.session_state[f"idx_{pool_name}"],
-                    key=f"select_{pool_name}_v2_{st.session_state[f"idx_{pool_name}"]}",
+                    key=f"select_{pool_name}_v2_{st.session_state[f'idx_{pool_name}']}",
                     label_visibility="collapsed"
                 )
                 # 如果使用者手動下拉選別檔，也要同步回狀態中
