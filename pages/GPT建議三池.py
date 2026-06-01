@@ -9,7 +9,7 @@ import twstock
 st.set_page_config(page_title="三池強力監控系統 Pro", layout="wide")
 st.title("🚀 三池強力監控系統 Pro")
 
-# --- 1. 資料處理函式 ---
+# --- 1. 資料處理 ---
 @st.cache_data(ttl=86400)
 def get_stock_list():
     stocks = []
@@ -35,7 +35,7 @@ def get_zigzag_points(df):
                 points.append((idx, segment['Low'].min(), "B"))
     return points
 
-# --- 2. 核心邏輯區 ---
+# --- 2. 核心邏輯 ---
 if "breakout" not in st.session_state: st.session_state["breakout"] = pd.DataFrame()
 tickers = [s["ticker"] for s in get_stock_list()]
 ticker_map = {s["ticker"]: s for s in get_stock_list()}
@@ -59,7 +59,7 @@ if st.button("🚀 執行強力選股"):
         for p, k in [("🚀 突破股", "breakout"), ("🟡 動能股", "momentum"), ("🧊 回檔股", "pullback")]:
             st.session_state[k] = df[df["池別"] == p].sort_values("分數", ascending=False).head(5)
 
-# --- 3. 完整介面與監控 ---
+# --- 3. 介面與顯示 ---
 if not st.session_state["breakout"].empty:
     pools = {"🚀 突破股": "breakout", "🟡 動能股": "momentum", "🧊 回檔股": "pullback"}
     
@@ -92,4 +92,25 @@ if not st.session_state["breakout"].empty:
     
     df_k = yf.download(ticker, period="3mo", progress=False)
     if isinstance(df_k.columns, pd.MultiIndex): df_k.columns = df_k.columns.get_level_values(0)
-    df_k['5MA'], df_k['10MA'], df_k['20MA'] = df_k['Close'].rolling(5).mean(), df_k['Close'].rolling(10).mean(), df_k['Close'].rolling(20
+    df_k['5MA'], df_k['10MA'], df_k['20MA'] = df_k['Close'].rolling(5).mean(), df_k['Close'].rolling(10).mean(), df_k['Close'].rolling(20).mean()
+    
+    l, p = df_k.iloc[-1], df_k.iloc[-2]
+    c1, c2, c3 = st.columns(3)
+    c1.metric("5MA", f"{l['5MA']:.2f}", "▲" if l['5MA'] > p['5MA'] else "▼")
+    c2.metric("10MA", f"{l['10MA']:.2f}", "▲" if l['10MA'] > p['10MA'] else "▼")
+    c3.metric("20MA", f"{l['20MA']:.2f}", "▲" if l['20MA'] > p['20MA'] else "▼")
+    
+    ap = [mpf.make_addplot(df_k[m].iloc[-90:], color=c) for m, c in zip(['5MA','10MA','20MA'], ['orange','blue','purple'])]
+    fig, axlist = mpf.plot(df_k.iloc[-90:], type='candle', returnfig=True, volume=True, figsize=(10, 6), addplot=ap)
+    ax = axlist[0]
+    
+    points = get_zigzag_points(df_k)
+    x = [df_k.index.get_loc(p[0]) for p in points if p[0] in df_k.iloc[-90:].index]
+    y = [p[1] for p in points if p[0] in df_k.iloc[-90:].index]
+    if len(x) > 1: ax.plot(x, y, color='gray', linewidth=1.2, zorder=2)
+    for idx, val, lbl in points:
+        if idx in df_k.iloc[-90:].index:
+            ax.annotate(lbl, (df_k.index.get_loc(idx), val), xytext=(0, 8 if lbl=='H' else -8), 
+                        textcoords='offset points', ha='center', color='red' if lbl=='H' else 'green',
+                        weight='bold', bbox=dict(fc="white", ec='gray', pad=0.5), zorder=10)
+    st.pyplot(fig)
