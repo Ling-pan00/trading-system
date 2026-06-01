@@ -6,90 +6,41 @@ import numpy as np
 import matplotlib.pyplot as plt
 import mplfinance as mpf
 
-# 設定頁面
-st.set_page_config(page_title="全量強勢突破選股", layout="wide")
-st.title("📊 565 檔強勢帶量突破選股系統 (白底版)")
+# 頁面設定
+st.set_page_config(page_title="全量強勢選股系統", layout="wide")
+st.title("📊 565 檔強勢帶量突破選股系統")
 
-# 1. 完整 565 檔清單 (已包含)
+# 1. 完整 565 檔清單
 @st.cache_data
 def get_industry_stock_pool():
-    # 這裡放入您之前的那 565 檔完整清單
-    return ["2330.TW", "2454.TW", "3008.TW", "2317.TW"] 
-
-# 2. 核心繪圖函數 (白底、含成交量、MA資訊列)
-def draw_zigzag_chart(df, ticker):
-    df['5MA'] = df['Close'].rolling(window=5).mean()
-    df['10MA'] = df['Close'].rolling(window=10).mean()
-    df['20MA'] = df['Close'].rolling(window=20).mean()
-    df['State'] = np.where(df['Close'] > df['5MA'], 1, -1)
-    df['State_Group'] = (df['State'] != df['State'].shift()).cumsum()
-    
-    h_points, b_points = [], []
-    for g_id, group in df.groupby('State_Group'):
-        if len(group) < 2: continue
-        if group['State'].iloc[0] == 1:
-            idx = group['High'].idxmax()
-            h_points.append((df.index.get_loc(idx), df.loc[idx, 'High']))
-        else:
-            idx = group['Low'].idxmin()
-            b_points.append((df.index.get_loc(idx), df.loc[idx, 'Low']))
-
-    # 上方資訊列 (仿照您照片的樣式)
-    def get_arrow(col):
-        return "▲" if df[col].iloc[-1] >= df[col].iloc[-2] else "▼"
-
-    st.markdown(f"""
-        <div style="background-color: #f0f2f6; padding: 15px; border-radius: 10px; border: 1px solid #ddd;">
-            <div style="display: flex; justify-content: space-around; font-size: 20px; font-weight: bold;">
-                <span style="color: #d97706;">5MA: {df['5MA'].iloc[-1]:.2f} {get_arrow('5MA')}</span>
-                <span style="color: #2563eb;">10MA: {df['10MA'].iloc[-1]:.2f}</span>
-            </div>
-            <div style="text-align: center; font-size: 20px; font-weight: bold; margin-top: 10px;">
-                <span style="color: #9333ea;">20MA: {df['20MA'].iloc[-1]:.2f} {get_arrow('20MA')}</span>
-            </div>
-        </div>
-    """, unsafe_allow_html=True)
-
-    # 繪圖參數 (White Style + Volume)
-    mc = mpf.make_marketcolors(up='red', down='green', edge='inherit', wick='inherit', volume='in')
-    s = mpf.make_mpf_style(marketcolors=mc, gridstyle='--', facecolor='white', gridcolor='#e0e0e0')
-    
-    apds = [
-        mpf.make_addplot(df['5MA'], color='#d97706', width=1.5),
-        mpf.make_addplot(df['10MA'], color='#2563eb', width=1.5),
-        mpf.make_addplot(df['20MA'], color='#9333ea', width=1.5)
-    ]
-    
-    # 繪製圖表 (含成交量)
-    fig, axlist = mpf.plot(df, type='candle', style=s, addplot=apds, returnfig=True, figsize=(10, 6), volume=True)
-    
-    # 畫連線與標註
-    all_points = sorted(h_points + b_points)
-    if len(all_points) > 1:
-        x_vals, y_vals = zip(*all_points)
-        axlist[0].plot(x_vals, y_vals, color='gray', linewidth=1.5, zorder=2)
-    
-    for x, y in h_points:
-        axlist[0].text(x, y, 'H', color='red', weight='bold', ha='center', va='bottom', bbox=dict(facecolor='yellow', alpha=0.5, boxstyle='circle'))
-    for x, y in b_points:
-        axlist[0].text(x, y, 'B', color='green', weight='bold', ha='center', va='top', bbox=dict(facecolor='yellow', alpha=0.5, boxstyle='circle'))
-        
-    st.pyplot(fig)
-    plt.close(fig)
-
-# 3. 掃描執行
-total_pool = get_industry_stock_pool()
-if st.button("🚀 執行全量白底圖表掃描"):
-    with st.spinner("掃描中..."):
-        data = yf.download(total_pool, period="3mo", group_by='ticker', auto_adjust=True, progress=False)
-        for t in total_pool:
-            try:
-                df = data[t] if len(total_pool) > 1 else data
-                if df.empty or len(df) < 22: continue
-                df.columns = [c.capitalize() for c in df.columns]
-                # 選股邏輯
-                if df['Close'].iloc[-1] > df['High'].iloc[-21:-1].max() and \
-                   df['Volume'].iloc[-1] > df['Volume'].iloc[-21:-1].mean() * 2:
-                    st.subheader(f"✅ 符合標的：{t}")
-                    draw_zigzag_chart(df, t)
-            except: continue
+    # 這裡放完整的 565 檔
+    return [
+        "1503.TW", "1504.TW", "1513.TW", "1514.TW", "1519.TW", "1521.TW", "1522.TW", "1524.TW", "1525.TW", "1526.TW",
+        "1527.TW", "1528.TW", "1529.TW", "1530.TW", "1531.TW", "1532.TW", "1533.TW", "1535.TW", "1536.TW", "1537.TW",
+        "1538.TW", "1539.TW", "1540.TW", "1541.TW", "1560.TW", "1582.TW", "1583.TWO", "1584.TWO", "1586.TWO", "1587.TWO",
+        "1591.TWO", "1593.TWO", "1597.TWO", "1599.TWO", "1605.TW", "1608.TW", "1704.TW", "1708.TW", "1710.TW", "1711.TW",
+        "1712.TW", "1713.TW", "1714.TW", "1717.TW", "1718.TW", "1720.TW", "1721.TW", "1722.TW", "1723.TW", "1726.TW",
+        "1727.TW", "1730.TW", "1731.TW", "1732.TW", "1733.TW", "1734.TW", "1735.TW", "1736.TW", "1742.TWO", "1750.TWO",
+        "2302.TW", "2303.TW", "2329.TW", "2330.TW", "2337.TW", "2338.TW", "2344.TW", "2351.TW", "2363.TW", "2369.TW",
+        "2379.TW", "2388.TW", "2408.TW", "2436.TW", "2441.TW", "2449.TW", "2454.TW", "2458.TW", "2481.TW", "3006.TW",
+        "3016.TW", "3034.TW", "3035.TW", "3041.TW", "3054.TW", "3094.TWO", "3105.TWO", "3131.TWO", "3141.TWO", "3169.TWO",
+        "3189.TW", "3227.TWO", "3228.TWO", "3260.TWO", "3264.TWO", "3265.TWO", "3289.TWO", "3374.TWO", "3413.TW", "3438.TWO",
+        "3443.TW", "3527.TWO", "3529.TWO", "3532.TW", "3545.TW", "3556.TWO", "3567.TWO", "3583.TW", "3587.TWO", "3588.TWO",
+        "3592.TWO", "3653.TW", "3661.TW", "3675.TWO", "3680.TWO", "3686.TW", "3707.TWO", "3711.TW", "4919.TW", "4952.TW",
+        "4961.TW", "4966.TWO", "4967.TW", "4968.TW", "4976.TW", "5269.TW", "5274.TWO", "5285.TW", "5289.TWO", "5305.TW",
+        "5347.TWO", "5351.TWO", "5425.TWO", "5471.TWO", "5483.TWO", "6104.TWO", "6125.TWO", "6129.TWO", "6138.TWO", "6147.TWO",
+        "6182.TWO", "6202.TW", "6224.TW", "6239.TW", "6243.TW", "6257.TW", "6271.TW", "6287.TWO", "6411.TWO", "6415.TW",
+        "6435.TWO", "6451.TW", "6462.TWO", "6488.TWO", "6494.TWO", "6510.TWO", "6526.TW", "6531.TW", "6533.TW", "6548.TWO",
+        "6568.TWO", "6573.TWO", "6679.TWO", "6684.TWO", "6719.TW", "6732.TWO", "6756.TW", "6770.TW", "6789.TW", "6806.TW",
+        "6834.TWO", "8016.TW", "8028.TWO", "8054.TWO", "8081.TWO", "8110.TW", "8131.TW", "8150.TW", "8261.TW", "8271.TW",
+        "2324.TW", "2331.TW", "2352.TW", "2353.TW", "2356.TW", "2357.TW", "2362.TW", "2364.TW", "2365.TW", "2376.TW",
+        "2377.TW", "2382.TW", "2395.TW", "2397.TW", "2399.TW", "2405.TW", "2424.TW", "2495.TW", "3005.TW", "3013.TW",
+        "3017.TW", "3022.TW", "3046.TW", "3057.TW", "3231.TW", "3325.TWO", "3356.TW", "3416.TW", "3494.TW", "3515.TW",
+        "3540.TWO", "3563.TW", "3570.TWO", "3615.TWO", "3694.TW", "3706.TW", "4916.TW", "4938.TW", "5215.TW", "5410.TWO",
+        "6121.TWO", "6143.TWO", "6150.TWO", "6160.TWO", "6206.TW", "6230.TW", "6235.TW", "6277.TW", "6412.TW", "6414.TW",
+        "6491.TW", "6509.TWO", "6561.TWO", "6613.TWO", "6625.TW", "6641.TW", "6695.TW", "6698.TW", "6811.TWO", "8032.TWO",
+        "8040.TWO", "8050.TWO", "8064.TWO", "8076.TWO", "8114.TW", "8124.TWO", "8163.TW", "8210.TW", "8477.TWO", "2317.TW",
+        "2354.TW", "2355.TW", "2359.TW", "2360.TW", "2383.TW", "2423.TW", "2461.TW", "2464.TW", "2474.TW", "2482.TW",
+        "2491.TWO", "3023.TW", "3030.TW", "3138.TW", "3209.TW", "3211.TWO", "3288.TWO", "3312.TW", "3406.TW", "3548.TWO",
+        "3550.TW", "3580.TWO", "3596.TW", "3622.TW", "3645.TW", "3669.TW", "4541.TWO", "4551.TWO", "4906.TW", "5225.TW",
+        "5443.TWO", "5490.TWO", "6115.TW", "613
