@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import yfinance as yf
-from datetime import datetime, timedelta
+from datetime import datetime
 import numpy as np
 import matplotlib.pyplot as plt
 import mplfinance as mpf
@@ -93,6 +93,8 @@ def draw_zigzag_chart(df, ticker):
             b_points.append((df.index.get_loc(idx), df.loc[idx, 'Low']))
     def get_arrow(col):
         return "▲" if df[col].iloc[-1] >= df[col].iloc[-2] else "▼"
+    
+    # 修改：白底背景配色
     st.markdown(f"""
         <div style="background-color: #F0F2F6; padding: 15px; border-radius: 10px; color: black;">
             <div style="display: flex; justify-content: space-around; font-size: 20px; font-weight: bold;">
@@ -104,13 +106,14 @@ def draw_zigzag_chart(df, ticker):
             </div>
         </div>
     """, unsafe_allow_html=True)
+    
     mc = mpf.make_marketcolors(up='red', down='green', edge='inherit', wick='inherit', volume='in')
-    # 將 facecolor 改為 '#FFFFFF' (白色)
     s = mpf.make_mpf_style(marketcolors=mc, gridstyle='--', facecolor='#FFFFFF')
-    apds = [mpf.make_addplot(df['5MA'], color='#FF8C00', width=1), # 更改 5MA 顏色以適應白底
-            mpf.make_addplot(df['10MA'], color='#0000FF', width=1), # 更改 10MA 顏色
-            mpf.make_addplot(df['20MA'], color='#800080', width=1)] # 更改 20MA 顏色
+    apds = [mpf.make_addplot(df['5MA'], color='#FF8C00', width=1),
+            mpf.make_addplot(df['10MA'], color='#0000FF', width=1),
+            mpf.make_addplot(df['20MA'], color='#800080', width=1)]
     fig, axlist = mpf.plot(df, type='candle', style=s, addplot=apds, returnfig=True, figsize=(10, 6))
+    
     all_points = sorted(h_points + b_points)
     if len(all_points) > 1:
         x_vals, y_vals = zip(*all_points)
@@ -125,6 +128,9 @@ def draw_zigzag_chart(df, ticker):
 # 掃描邏輯
 total_pool = get_industry_stock_pool()
 if st.button("🚀 執行全量策略掃描"):
+    results = []
+    scan_date = datetime.now().strftime("%Y-%m-%d %H:%M")
+    
     with st.spinner("正在分析數據..."):
         batch_size = 50
         for i in range(0, len(total_pool), batch_size):
@@ -137,6 +143,17 @@ if st.button("🚀 執行全量策略掃描"):
                     df.columns = [c.capitalize() for c in df.columns]
                     if df['Close'].iloc[-1] > df['High'].iloc[-21:-1].max() and \
                        df['Volume'].iloc[-1] > df['Volume'].iloc[-21:-1].mean() * 2:
+                        results.append(t)
                         st.subheader(f"✅ 標的：{t}")
                         draw_zigzag_chart(df, t)
                 except: continue
+
+    st.divider()
+    col1, col2 = st.columns(2)
+    col1.metric("掃描日期", scan_date)
+    col2.metric("符合條件總筆數", len(results))
+    
+    if results:
+        st.write("符合清單：", ", ".join(results))
+    else:
+        st.warning("本次掃描未發現符合強勢帶量突破的標的。")
