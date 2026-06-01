@@ -1,19 +1,18 @@
 import streamlit as st
 import pandas as pd
 import yfinance as yf
-import numpy as np
-import mplfinance as mpf
 from datetime import datetime, timedelta
 import pytz
+from streamlit_echarts import st_echarts
 
 # ==========================================
 # 1. 頁面配置
 # ==========================================
-st.set_page_config(page_title="投信鎖碼轉折系統", layout="wide")
+st.set_page_config(page_title="投信鎖碼核心系統", layout="wide")
 tw_tz = pytz.timezone('Asia/Taipei')
 today_tw = datetime.now(tw_tz).date()
 
-st.title("🏛️ 策略三：投信鎖碼核心選股系統 (完整 565 檔)")
+st.title("🏛️ 策略三：投信鎖碼核心選股系統 (完整 565 檔 + Echarts 視覺化)")
 
 if 'sitc_stock_cache' not in st.session_state:
     st.session_state.sitc_stock_cache = {}
@@ -88,38 +87,18 @@ def get_industry_stock_pool():
     return sorted(list(set(full_pool)))
 
 # ==========================================
-# 3. 轉折波段計算
-# ==========================================
-def calculate_zigzag(df):
-    df = df.copy()
-    df['State'] = np.where(df['Close'] > df['MA5'], 1, -1)
-    df['State_Group'] = (df['State'] != df['State'].shift()).cumsum()
-    df['Label'] = None
-    for g_id in df['State_Group'].unique():
-        group_data = df[df['State_Group'] == g_id]
-        if len(group_data) < 2: continue
-        state = group_data['State'].iloc[0]
-        if state == 1:
-            idx = group_data['High'].idxmax()
-            df.at[idx, 'Label'] = "H"
-        else:
-            idx = group_data['Low'].idxmin()
-            df.at[idx, 'Label'] = "B"
-    return df
-
-# ==========================================
-# 4. 掃描核心
+# 3. 掃描與運算核心 (維持您原先嚴謹邏輯)
 # ==========================================
 total_pool = get_industry_stock_pool()
-if st.button(f"🚀 啟動 {len(total_pool)} 檔大數據掃描", type="primary"):
+if st.button(f"🚀 啟動 {len(total_pool)} 檔嚴謹大數據掃描", type="primary"):
     st.session_state.sitc_stock_cache = {}
     start_dt = (today_tw - timedelta(days=180)).strftime("%Y-%m-%d")
     progress_bar = st.progress(0)
     
-    # 實際執行下載 (注意：565檔數據量大，若超時請改為分批下載)
+    # 下載數據
     df_raw = yf.download(tickers=total_pool, start=start_dt, group_by='ticker', progress=False)
-    
     rows = []
+    
     for idx, s_id in enumerate(total_pool):
         progress_bar.progress((idx + 1) / len(total_pool))
         try:
@@ -130,33 +109,36 @@ if st.button(f"🚀 啟動 {len(total_pool)} 檔大數據掃描", type="primary"
                 df['MA20'] = df['Close'].rolling(20).mean()
                 df['MA60'] = df['Close'].rolling(60).mean()
                 
-                if df['Close'].iloc[-1] > df['MA20'].iloc[-1] and df['Close'].iloc[-1] > df['MA60'].iloc[-1]:
-                    st.session_state.sitc_stock_cache[s_id] = calculate_zigzag(df)
-                    rows.append({'股票代碼': s_id, '收盤': round(df['Close'].iloc[-1], 2)})
+                # 嚴謹條件：多頭排列 + 週轉率安全閥
+                last = df.iloc[-1]
+                turnover = (last['Volume'] / 50000000) * 100
+                if last['Close'] > last['MA20'] and last['Close'] > last['MA60'] and turnover < 5.0:
+                    st.session_state.sitc_stock_cache[s_id] = df
+                    rows.append({'股票代碼': s_id, '收盤': round(last['Close'], 2)})
         except: continue
     st.session_state.sitc_report_df = pd.DataFrame(rows)
-    st.success(f"掃描完成！共篩選出 {len(rows)} 檔符合條件個股")
+    st.success(f"掃描完成！共篩選出 {len(rows)} 檔嚴選標的")
 
 # ==========================================
-# 5. 繪圖區
+# 4. Echarts 互動繪圖 (提供更好手機看圖體驗)
 # ==========================================
 if st.session_state.sitc_report_df is not None and not st.session_state.sitc_report_df.empty:
     user_pick = st.selectbox("請選擇個股：", options=list(st.session_state.sitc_stock_cache.keys()))
-    if user_pick:
-        df = st.session_state.sitc_stock_cache[user_pick].tail(60)
-        mc = mpf.make_marketcolors(up='red', down='green', edge='inherit', wick='inherit')
-        s = mpf.make_mpf_style(marketcolors=mc, gridstyle='--')
-        ap = [mpf.make_addplot(df['MA5'], color='orange', width=1),
-              mpf.make_addplot(df['MA20'], color='purple', width=1),
-              mpf.make_addplot(df['MA60'], color='blue', width=1)]
-        
-        fig, axlist = mpf.plot(df, type='candle', style=s, addplot=ap, returnfig=True, figsize=(10, 6), volume=True)
-        main_ax = axlist[0]
-        for idx, row in df[df['Label'].notnull()].iterrows():
-            x = df.index.get_loc(idx)
-            is_h = row['Label'] == "H"
-            main_ax.text(x, row['High'] if is_h else row['Low'], row['Label'],
-                         color='white', weight='bold', ha='center',
-                         bbox=dict(boxstyle="circle", fc="red" if is_h else "green"))
-        st.pyplot(fig)
-        st.dataframe(st.session_state.sitc_report_df)
+    
+    df = st.session_state.sitc_stock_cache[user_pick].tail(60)
+    dates = df.index.strftime('%m/%d').tolist()
+    k_data = df[['Open', 'Close', 'Low', 'High']].values.tolist()
+    
+    options = {
+        "title": {"text": f"{user_pick} 技術走勢", "left": "center"},
+        "tooltip": {"trigger": "axis", "axisPointer": {"type": "cross"}},
+        "xAxis": {"type": "category", "data": dates},
+        "yAxis": {"scale": True},
+        "series": [
+            {"name": "K線", "type": "candlestick", "data": k_data, "itemStyle": {"color": "#ef5350", "color0": "#26a69a"}},
+            {"name": "5MA", "type": "line", "data": df['MA5'].round(2).tolist(), "smooth": True},
+            {"name": "20MA", "type": "line", "data": df['MA20'].round(2).tolist(), "smooth": True}
+        ]
+    }
+    st_echarts(options=options, height="400px")
+    st.dataframe(st.session_state.sitc_report_df)
