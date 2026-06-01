@@ -5,20 +5,21 @@ from datetime import datetime, timedelta
 import pytz
 from streamlit_echarts import st_echarts
 
-# 頁面配置
+# 1. 頁面配置
 st.set_page_config(page_title="投信鎖碼核心系統", layout="wide")
 tw_tz = pytz.timezone('Asia/Taipei')
 today_tw = datetime.now(tw_tz).date()
 
-st.title("🏛️ 策略三：投信鎖碼核心選股系統 (完整版)")
+st.title("🏛️ 策略三：投信鎖碼核心選股系統 (完整 565 檔)")
 
+# 初始化 Session State
 if 'sitc_stock_cache' not in st.session_state:
     st.session_state.sitc_stock_cache = {}
 if 'sitc_report_df' not in st.session_state:
     st.session_state.sitc_report_df = None
 
 def get_industry_stock_pool():
-    # 這裡放完整的 565 檔清單，不進行任何簡化
+    # 完整 565 檔清單
     return [
         "1503.TW", "1504.TW", "1513.TW", "1514.TW", "1519.TW", "1521.TW", "1522.TW", "1524.TW", "1525.TW", "1526.TW",
         "1527.TW", "1528.TW", "1529.TW", "1530.TW", "1531.TW", "1532.TW", "1533.TW", "1535.TW", "1536.TW", "1537.TW",
@@ -81,35 +82,51 @@ def get_industry_stock_pool():
         "6696.TWO", "6830.TWO", "6963.TW", "8454.TW"
     ]
 
-# 掃描邏輯與繪圖介面
+# 掃描核心
 total_pool = get_industry_stock_pool()
-if st.button("🚀 開始掃描全 565 檔"):
+if st.button("🚀 開始執行 565 檔全量掃描"):
     st.session_state.sitc_stock_cache = {}
     rows = []
-    # 這裡實作分批，不簡化代碼
+    progress_bar = st.progress(0)
+    
+    # 分批處理
     for i in range(0, len(total_pool), 50):
         batch = total_pool[i:i+50]
+        progress_bar.progress(i / len(total_pool))
+        
         df_raw = yf.download(batch, period="6mo", group_by='ticker', progress=False)
         for s in batch:
             try:
-                # 嚴格過濾邏輯
-                df = df_raw[s].dropna()
-                ma20 = df['Close'].rolling(20).mean().iloc[-1]
-                ma60 = df['Close'].rolling(60).mean().iloc[-1]
-                close = df['Close'].iloc[-1]
-                vol = df['Volume'].iloc[-1]
-                if close > ma20 > ma60 and (vol / 50000000) < 0.05:
-                    st.session_state.sitc_stock_cache[s] = df
-                    rows.append({'代碼': s, '收盤': round(close, 2)})
+                # 確保該股有資料
+                if s in df_raw.columns.levels[0]:
+                    df = df_raw[s].dropna()
+                    if len(df) < 60: continue
+                    
+                    ma20 = df['Close'].rolling(20).mean().iloc[-1]
+                    ma60 = df['Close'].rolling(60).mean().iloc[-1]
+                    close = df['Close'].iloc[-1]
+                    vol = df['Volume'].iloc[-1]
+                    
+                    if close > ma20 > ma60 and (vol / 50000000) < 0.05:
+                        st.session_state.sitc_stock_cache[s] = df
+                        rows.append({'代碼': s, '收盤': round(float(close), 2)})
             except: continue
+    
     st.session_state.sitc_report_df = pd.DataFrame(rows)
+    progress_bar.progress(100)
 
-# 顯示結果與互動圖表
-if not st.session_state.sitc_report_df.empty:
-    pick = st.selectbox("選擇個股", options=list(st.session_state.sitc_stock_cache.keys()))
-    df = st.session_state.sitc_stock_cache[pick].tail(60)
-    st_echarts(options={
-        "xAxis": {"data": df.index.strftime('%Y-%m-%d').tolist()},
-        "yAxis": {"scale": True},
-        "series": [{"type": "candlestick", "data": df[['Open','Close','Low','High']].values.tolist()}]
-    }, height="400px")
+# 顯示結果 (安全檢查機制)
+if 'sitc_report_df' in st.session_state and st.session_state.sitc_report_df is not None:
+    if not st.session_state.sitc_report_df.empty:
+        pick = st.selectbox("選擇個股查看圖表", options=list(st.session_state.sitc_stock_cache.keys()))
+        df = st.session_state.sitc_stock_cache[pick].tail(60)
+        
+        st_echarts(options={
+            "xAxis": {"type": "category", "data": df.index.strftime('%Y-%m-%d').tolist()},
+            "yAxis": {"scale": True},
+            "series": [{"type": "candlestick", "data": df[['Open','Close','Low','High']].values.tolist()}]
+        }, height="400px")
+        
+        st.dataframe(st.session_state.sitc_report_df)
+    else:
+        st.warning("無符合條件的個股。")
