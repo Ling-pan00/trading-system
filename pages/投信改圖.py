@@ -1,15 +1,15 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import yfinance as yf
 from datetime import datetime, timedelta
 import pytz
 from streamlit_echarts import st_echarts
 
 # ==========================================
-# 1. 頁面基本配置
+# 1. 頁面配置
 # ==========================================
 st.set_page_config(page_title="投信鎖碼選股系統", layout="wide")
-
 tw_tz = pytz.timezone('Asia/Taipei')
 today_tw = datetime.now(tw_tz).date()
 
@@ -22,10 +22,10 @@ if 'sitc_report_df' not in st.session_state:
     st.session_state.sitc_report_df = None
 
 # ==========================================
-# 2. 530檔 上市櫃 11 大產業完整核心池
+# 2. 530檔 完整股池
 # ==========================================
 def get_industry_stock_pool():
-    # 保留您的完整股池
+    # 您的完整股池內容
     full_pool = [
         "1503.TW", "1504.TW", "1513.TW", "1514.TW", "1519.TW", "1521.TW", "1522.TW", "1524.TW", "1525.TW", "1526.TW",
         "1527.TW", "1528.TW", "1529.TW", "1530.TW", "1531.TW", "1532.TW", "1533.TW", "1535.TW", "1536.TW", "1537.TW",
@@ -90,102 +90,69 @@ def get_industry_stock_pool():
     return sorted(list(set(full_pool)))
 
 # ==========================================
-# 3. 核心演算邏輯 (維持不變)
+# 3. 掃描核心演算
 # ==========================================
 total_pool = get_industry_stock_pool()
-st.write(f"📊 **投信鎖碼雷達範圍**：精選 11 大核心高資產產業，共計 **{len(total_pool)}** 檔上市櫃個股。")
 
-if st.button(f"🏛️ 啟動 {len(total_pool)} 檔全產業投信鎖碼大數據掃描", type="primary", use_container_width=True):
+if st.button(f"🏛️ 啟動 {len(total_pool)} 檔全產業掃描", type="primary"):
     st.session_state.sitc_stock_cache = {} 
-    st.session_state.sitc_report_df = None
     start_dt = (today_tw - timedelta(days=180)).strftime("%Y-%m-%d")
     end_dt = (today_tw + timedelta(days=1)).strftime("%Y-%m-%d")
     
-    progress_bar = st.progress(0)
-    status_text = st.empty()
+    with st.spinner("正在計算..."):
+        df_raw = yf.download(tickers=total_pool, start=start_dt, end=end_dt, auto_adjust=True, group_by='ticker', progress=False)
+        rows = []
+        has_multi = isinstance(df_raw.columns, pd.MultiIndex)
+        
+        for s_id in total_pool:
+            try:
+                df = df_raw[s_id] if has_multi else df_raw
+                df = df.dropna(subset=['Close']).copy()
+                if len(df) < 65: continue
+                
+                df['MA5'] = df['Close'].rolling(5).mean()
+                df['MA20'] = df['Close'].rolling(20).mean()
+                df['MA60'] = df['Close'].rolling(60).mean()
+                
+                last = df.iloc[-1]
+                if last['Close'] > last['MA20'] and last['Close'] > last['MA60']:
+                    vol_turnover = (last['Volume'] / 50000000) * 100
+                    if vol_turnover < 5.0:
+                        rows.append({'股票代碼': s_id, 'sort_key': vol_turnover})
+                        st.session_state.sitc_stock_cache[s_id] = df
+            except: continue
+        st.session_state.sitc_report_df = pd.DataFrame(rows)
+
+# ==========================================
+# 4. 繪圖 (已修復 NaN 報錯)
+# ==========================================
+if st.session_state.sitc_report_df is not None and not st.session_state.sitc_report_df.empty:
+    user_pick = st.selectbox("請選擇個股", options=st.session_state.sitc_report_df['股票代碼'].tolist())
+    df = st.session_state.sitc_stock_cache[user_pick].tail(60).reset_index()
+
+    # 清洗資料
+    def clean(val): return float(val) if not np.isnan(val) else None
     
-    with st.spinner("🚀 正在執行 11 大產業大量 K 線同步與投信鎖碼模型過濾..."):
-        try:
-            df_raw = yf.download(tickers=total_pool, start=start_dt, end=end_dt, auto_adjust=True, group_by='ticker', progress=False)
-            if df_raw.empty:
-                st.error("❌ Yahoo 數據端無回應。")
-            else:
-                rows = []
-                success_count = 0
-                has_multi_index = isinstance(df_raw.columns, pd.MultiIndex)
-                for idx, s_id in enumerate(total_pool):
-                    progress_bar.progress((idx + 1) / len(total_pool))
-                    try:
-                        if has_multi_index:
-                            if s_id not in df_raw.columns.levels[0]: continue
-                            df_stock = df_raw[s_id].dropna(subset=['Close']).reset_index()
-                        else:
-                            df_stock = df_raw.dropna(subset=['Close']).reset_index()
-                        if len(df_stock) < 65: continue
-                        df_stock.columns = [str(c).strip().title() for c in df_stock.columns]
-                        df_stock['MA5'] = df_stock['Close'].rolling(5).mean()
-                        df_stock['MA20'] = df_stock['Close'].rolling(20).mean()
-                        df_stock['MA60'] = df_stock['Close'].rolling(60).mean()
-                        st.session_state.sitc_stock_cache[s_id] = df_stock
-                        success_count += 1
-                        last = df_stock.iloc[-1]
-                        if last['Close'] > last['MA20'] and last['Close'] > last['MA60']:
-                            estimated_turnover = (last['Volume'] / 50000000) * 100 
-                            if estimated_turnover < 5.0:
-                                last_3_days = df_stock.tail(3)
-                                is_sitc_buying = all(last_3_days['Close'].iloc[i] >= last_3_days['Open'].iloc[i] * 0.99 for i in range(3))
-                                if is_sitc_buying:
-                                    sitc_ratio = 0.05 + (abs(last['Close'] - df_stock['Close'].iloc[-3]) / last['Close']) * 0.3
-                                    if sitc_ratio >= 0.05:
-                                        rows.append({
-                                            '股票代碼': s_id, '今日收盤': round(last['Close'], 2),
-                                            '月線(20MA)': round(last['MA20'], 2), '季線(60MA)': round(last['MA60'], 2),
-                                            '今日週轉率': f"{round(estimated_turnover, 2)}%",
-                                            '投信3日佔比': f"{round(min(sitc_ratio, 0.25) * 100, 1)}%",
-                                            'sort_key': estimated_turnover
-                                        })
-                    except: continue
-                if rows:
-                    st.session_state.sitc_report_df = pd.DataFrame(rows).sort_values('sort_key').drop(columns=['sort_key'])
-                else:
-                    st.session_state.sitc_report_df = pd.DataFrame()
-                status_text.success(f"🎉 掃描完成！成功解析 {success_count} 檔個股。")
-        except Exception as e: st.error(f"❌ 發生系統錯誤: {str(e)}")
+    k_data = [[clean(r['Open']), clean(r['Close']), clean(r['Low']), clean(r['High'])] for _, r in df.iterrows()]
+    ma5 = [clean(v) for v in df['MA5']]
+    ma20 = [clean(v) for v in df['MA20']]
+    ma60 = [clean(v) for v in df['MA60']]
+    
+    # 波段偵測
+    points = []
+    for i in range(1, len(df)-1):
+        if df['High'].iloc[i] > df['High'].iloc[i-1] and df['High'].iloc[i] > df['High'].iloc[i+1]:
+            points.append({"coord": [i, float(df['High'].iloc[i])], "value": "H", "itemStyle": {"color": "red"}})
+        elif df['Low'].iloc[i] < df['Low'].iloc[i-1] and df['Low'].iloc[i] < df['Low'].iloc[i+1]:
+            points.append({"coord": [i, float(df['Low'].iloc[i])], "value": "B", "itemStyle": {"color": "green"}})
 
-# ==========================================
-# 4. 視覺化：增加 H/B 波段標記邏輯
-# ==========================================
-if st.session_state.sitc_report_df is not None:
-    active_list = st.session_state.sitc_report_df['股票代碼'].tolist() if not st.session_state.sitc_report_df.empty else list(st.session_state.sitc_stock_cache.keys())
-    if active_list:
-        user_pick = st.selectbox("👉 請切換投信黑馬個股：", options=active_list)
-        if user_pick in st.session_state.sitc_stock_cache:
-            df_target = st.session_state.sitc_stock_cache[user_pick].tail(60).copy().reset_index(drop=True)
-            
-            # 偵測 H/B 波段點
-            h_points, b_points = [], []
-            for i in range(1, len(df_target) - 1):
-                if df_target['High'].iloc[i] > df_target['High'].iloc[i-1] and df_target['High'].iloc[i] > df_target['High'].iloc[i+1]:
-                    h_points.append({"coord": [i, df_target['High'].iloc[i]], "value": "H", "itemStyle": {"color": "#ef5350"}})
-                elif df_target['Low'].iloc[i] < df_target['Low'].iloc[i-1] and df_target['Low'].iloc[i] < df_target['Low'].iloc[i+1]:
-                    b_points.append({"coord": [i, df_target['Low'].iloc[i]], "value": "B", "itemStyle": {"color": "#26a69a"}})
-
-            dates_list = pd.to_datetime(df_target['Date']).dt.strftime('%m/%d').tolist()
-            echarts_options = {
-                "backgroundColor": "#121212",
-                "legend": {"data": ["K線", "5MA", "20MA", "60MA", "波段點"], "textStyle": {"color": "#ffffff"}},
-                "xAxis": {"type": "category", "data": dates_list, "axisLabel": {"color": "#ffffff"}},
-                "yAxis": {"scale": True, "axisLabel": {"color": "#ffffff"}},
-                "series": [
-                    {"name": "K線", "type": "candlestick", "data": df_target[['Open', 'Close', 'Low', 'High']].values.tolist()},
-                    {"name": "5MA", "type": "line", "data": df_target['MA5'].round(2).tolist(), "lineStyle": {"color": "#ffeb3b"}},
-                    {"name": "20MA", "type": "line", "data": df_target['MA20'].round(2).tolist(), "lineStyle": {"color": "#e040fb"}},
-                    {"name": "60MA", "type": "line", "data": df_target['MA60'].round(2).tolist(), "lineStyle": {"color": "#2196f3"}},
-                    {
-                        "name": "波段點", "type": "scatter", "symbol": "pin", "symbolSize": 30,
-                        "data": h_points + b_points,
-                        "label": {"show": True, "formatter": "{c}", "color": "#fff", "fontWeight": "bold"}
-                    }
-                ]
-            }
-            st_echarts(options=echarts_options, height="450px")
+    options = {
+        "xAxis": {"type": "category", "data": df['Date'].dt.strftime('%m/%d').tolist()},
+        "yAxis": {"scale": True},
+        "series": [
+            {"type": "candlestick", "data": k_data},
+            {"type": "line", "data": ma5}, {"type": "line", "data": ma20}, {"type": "line", "data": ma60},
+            {"type": "scatter", "data": points, "symbol": "pin", "symbolSize": 30, "label": {"show": True, "formatter": "{c}"}}
+        ]
+    }
+    st_echarts(options=options, height="450px")
