@@ -6,10 +6,9 @@ import mplfinance as mpf
 import matplotlib.pyplot as plt
 
 # ==========================================
-# 1. 完整 565 檔股池定義 (精確鎖定)
+# 1. 完整 565 檔股池 (不修改、不簡化)
 # ==========================================
 def get_industry_stock_pool():
-    # 確保這是您原始的完整 565 檔清單
     return [
         "1503.TW", "1504.TW", "1513.TW", "1514.TW", "1519.TW", "1521.TW", "1522.TW", "1524.TW", "1525.TW", "1526.TW",
         "1527.TW", "1528.TW", "1529.TW", "1530.TW", "1531.TW", "1532.TW", "1533.TW", "1535.TW", "1536.TW", "1537.TW",
@@ -73,61 +72,58 @@ def get_industry_stock_pool():
     ]
 
 # ==========================================
-# 2. 主程式區
+# 2. 掃描運算區
 # ==========================================
+st.set_page_config(layout="wide")
 if 'cache' not in st.session_state: st.session_state.cache = {}
-industry_pool = get_industry_stock_pool() # 強制統一使用 565 檔
+pool = get_industry_stock_pool()
 
-if st.button(f"啟動掃描 ({len(industry_pool)} 檔)"):
-    with st.spinner("分析中..."):
-        df_raw = yf.download(industry_pool, period="6mo", auto_adjust=True, group_by='ticker', progress=False)
-        results = []
-        for s in industry_pool:
-            try:
-                df = df_raw[s] if isinstance(df_raw.columns, pd.MultiIndex) else df_raw
-                if df.empty or len(df) < 65: continue
-                # 篩選條件
-                if df['Close'].iloc[-1] > df['Close'].rolling(20).mean().iloc[-1] and \
-                   df['Close'].iloc[-1] > df['Close'].rolling(60).mean().iloc[-1] and \
-                   (df['Volume'].iloc[-1] / 50000000) * 100 < 5.0:
-                    results.append(s)
-                    st.session_state.cache[s] = df
-            except: continue
-        st.session_state.results = results
+if st.button(f"執行掃描 ({len(pool)} 檔)"):
+    df_raw = yf.download(pool, period="6mo", auto_adjust=True, group_by='ticker', progress=False)
+    hits = []
+    for s in pool:
+        df = df_raw[s] if isinstance(df_raw.columns, pd.MultiIndex) else df_raw
+        if len(df) < 65: continue
+        # 篩選條件
+        if df['Close'].iloc[-1] > df['Close'].rolling(20).mean().iloc[-1] and \
+           df['Close'].iloc[-1] > df['Close'].rolling(60).mean().iloc[-1] and \
+           (df['Volume'].iloc[-1] / 50000000) * 100 < 5.0:
+            hits.append(s)
+            st.session_state.cache[s] = df
+    st.session_state.hits = hits
 
-if 'results' in st.session_state:
-    pick = st.selectbox("選擇個股:", st.session_state.results)
+# ==========================================
+# 3. 繪圖區 (mplfinance 完美複製)
+# ==========================================
+if 'hits' in st.session_state:
+    pick = st.selectbox("選擇個股:", st.session_state.hits)
     df = st.session_state.cache[pick].tail(60).copy()
     
-    # 指標計算
+    # 轉折計算
     df['MA5'] = df['Close'].rolling(5).mean()
     df['MA20'] = df['Close'].rolling(20).mean()
     df['State'] = np.where(df['Close'] > df['MA5'], 1, -1)
     df['State_Group'] = (df['State'] != df['State'].shift()).cumsum()
     
-    points = []
-    for g_id, group in df.groupby('State_Group'):
-        if g_id <= 2: continue
-        if group['State'].iloc[0] == 1:
-            idx = group['High'].idxmax()
-            points.append((df.index.get_loc(idx), df.loc[idx, 'High'], "H"))
-        else:
-            idx = group['Low'].idxmin()
-            points.append((df.index.get_loc(idx), df.loc[idx, 'Low'], "B"))
-
-    # 繪圖參數微調
-    mc = mpf.make_marketcolors(up='red', down='green', edge='inherit', wick='inherit', volume='in')
-    s = mpf.make_mpf_style(marketcolors=mc, gridstyle='--')
-    ap = [mpf.make_addplot(df[['MA5', 'MA20']])]
+    pts = []
+    for gid, g in df.groupby('State_Group'):
+        if gid <= 2: continue
+        idx = g['High'].idxmax() if g['State'].iloc[0] == 1 else g['Low'].idxmin()
+        pts.append((df.index.get_loc(idx), df.loc[idx, 'High'] if g['State'].iloc[0] == 1 else df.loc[idx, 'Low'], "H" if g['State'].iloc[0] == 1 else "B"))
     
-    fig, axes = mpf.plot(df, type='candle', style=s, addplot=ap, returnfig=True, volume=True, panel_ratios=(4,1), figsize=(12, 6))
+    # 繪圖視覺設定 (黑白、簡潔)
+    mc = mpf.make_marketcolors(up='black', down='black', edge='black', wick='black', volume='gray')
+    s = mpf.make_mpf_style(marketcolors=mc, gridstyle='', facecolor='white', edgecolor='black')
     
-    # 畫連接線與圓點
-    if points:
-        x_coords, y_coords, labels = zip(*points)
-        axes[0].plot(x_coords, y_coords, color='black', alpha=0.6, linewidth=1.2)
-        for i, (px, py, l) in enumerate(points):
-            axes[0].annotate(l, (px, py), color='white', ha='center', va='center', fontsize=8,
-                             bbox=dict(boxstyle='circle', fc='red' if l=='H' else 'green', pad=0.3))
+    ap = [mpf.make_addplot(df[['MA5', 'MA20']], color='black', width=0.8)]
+    fig, ax = mpf.plot(df, type='candle', style=s, addplot=ap, returnfig=True, volume=True, panel_ratios=(4,1))
+    
+    # 連接線與圓點標記
+    if pts:
+        x, y, l = zip(*pts)
+        ax[0].plot(x, y, color='black', linewidth=1.2)
+        for i, (px, py, label) in enumerate(pts):
+            ax[0].annotate(label, (px, py), color='black', ha='center', va='center', 
+                           bbox=dict(boxstyle='circle', fc='white', ec='black', pad=0.3))
     
     st.pyplot(fig)
