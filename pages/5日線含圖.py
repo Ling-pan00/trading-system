@@ -332,12 +332,14 @@ if st.button("🚀 執行盤後策略選股"):
     else:
         df_res = pd.DataFrame(results)
         for pool_name in ["🔴 第四池", "🔵 第三池", "🟠 第二池", "🟡 第一池"]:
-            sub_df = df_res[df_res["池別"] == pool_name]
-            st.session_state[f"pool_{pool_name}"] = sub_df # 將包含 ticker 欄位的完整資料寫入暫存
+            sub_df = df_res[df_res["池別"] == pool_name].sort_values(by="成交量(張)", ascending=False).reset_index(drop=True)
+            st.session_state[f"pool_{pool_name}"] = sub_df # 將排序好的完整資料寫入暫存
+            # 重設該池的當前選取索引為 0 (第一檔)
+            st.session_state[f"idx_{pool_name}"] = 0
 
 
 # ==========================================
-# 📊 畫面渲染模組與【點擊看轉折圖互動機制】
+# 📊 畫面渲染模組與【按鈕與下拉選單雙向聯動機制】
 # ==========================================
 for pool_name in ["🔴 第四池", "🔵 第三池", "🟠 第二池", "🟡 第一池"]:
     if f"pool_{pool_name}" in st.session_state:
@@ -346,25 +348,57 @@ for pool_name in ["🔴 第四池", "🔵 第三池", "🟠 第二池", "🟡 �
         
         if not saved_df.empty:
             # 呈現給使用者看的前台表格：自動依照「成交量(張)」由大到小排序，並將圖表用的後台 ticker 隱藏
-            display_df = saved_df.sort_values(by="成交量(張)", ascending=False).drop(columns=["ticker"])
+            display_df = saved_df.drop(columns=["ticker"])
             st.dataframe(display_df, use_container_width=True)
             
-            # 🎯 點擊選股連動：為該池生成專屬的下拉式連動選單
+            # 生成股票選單選項 (與 DataFrame 索引完全對應)
             stock_options = [f"{row['代號']} {row['名稱']}" for _, row in saved_df.iterrows()]
-            selected_stock = st.selectbox(
-                f"🔍 點擊選擇【{pool_name}】中的股票代號查看 3個月轉折圖:", 
-                ["請選擇..."] + stock_options, 
-                key=f"select_{pool_name}"
-            )
             
-            if selected_stock != "請選擇...":
-                selected_code = selected_stock.split(" ")[0]
-                selected_name = selected_stock.split(" ")[1]
-                # 撈出對應的正確 yfinance 後綴
-                target_ticker = saved_df[saved_df["代號"] == selected_code]["ticker"].values[0]
+            # 初始化該池別的 index 狀態
+            if f"idx_{pool_name}" not in st.session_state:
+                st.session_state[f"idx_{pool_name}"] = 0
                 
-                # 繪製圖形
-                draw_zigzag_chart(target_ticker, selected_name)
+            current_idx = st.session_state[f"idx_{pool_name}"]
+
+            # 🛠️ 建立控制列：左按鈕、下拉選單、右按鈕
+            st.write(f"🔍 **切換檢視 K 線圖（共 {len(stock_options)} 檔）：**")
+            btn_col1, sel_col, btn_col2 = st.columns([1, 4, 1])
+            
+            with btn_col1:
+                # 確保點擊「上一檔」時不會超出下限
+                if st.button("⏮️ 上一檔", key=f"prev_btn_{pool_name}", use_container_width=True):
+                    if current_idx > 0:
+                        st.session_state[f"idx_{pool_name}"] = current_idx - 1
+                        st.rerun()
+
+            with sel_col:
+                # 下拉選單：其選取值會與 session_state 內的 index 完全同步
+                selected_stock = st.selectbox(
+                    f"選擇股票：", 
+                    stock_options, 
+                    index=st.session_state[f"idx_{pool_name}"],
+                    key=f"select_{pool_name}_internal",
+                    label_visibility="collapsed"
+                )
+                # 如果使用者手動手點選單，也要把最新的 index 紀錄回狀態中
+                new_idx = stock_options.index(selected_stock)
+                if new_idx != current_idx:
+                    st.session_state[f"idx_{pool_name}"] = new_idx
+                    st.rerun()
+
+            with btn_col2:
+                # 確保點擊「下一檔」時不會超出上限
+                if st.button("⏭️ 下一檔", key=f"next_btn_{pool_name}", use_container_width=True):
+                    if current_idx < len(stock_options) - 1:
+                        st.session_state[f"idx_{pool_name}"] = current_idx + 1
+                        st.rerun()
+            
+            # 依據最終確定的 index 撈出後台對應的正確 ticker 並繪圖
+            final_idx = st.session_state[f"idx_{pool_name}"]
+            target_row = saved_df.iloc[final_idx]
+            
+            # 繪製圖形
+            draw_zigzag_chart(target_row["ticker"], target_row["名稱"])
         else:
             st.info("此池目前無符合條件股票")
 
