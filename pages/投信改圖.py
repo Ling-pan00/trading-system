@@ -7,22 +7,19 @@ import pytz
 from streamlit_echarts import st_echarts
 
 # ==========================================
-# 1. 頁面配置
+# 1. 頁面與全域設定
 # ==========================================
 st.set_page_config(page_title="投信鎖碼核心選股系統", layout="wide")
 tw_tz = pytz.timezone('Asia/Taipei')
 today_tw = datetime.now(tw_tz).date()
 
-st.title("🏛️ 策略三：投信鎖碼核心選股系統")
-
 if 'sitc_stock_cache' not in st.session_state: st.session_state.sitc_stock_cache = {}
 if 'sitc_report_df' not in st.session_state: st.session_state.sitc_report_df = None
 
 # ==========================================
-# 2. 原始完整股池 (不簡化)
+# 2. 原始完整股池 (完全保留)
 # ==========================================
 def get_industry_stock_pool():
-    # 您的完整股池清單 (此處已包含所有您提供的 530+ 檔股票)
     full_pool = [
         "1503.TW", "1504.TW", "1513.TW", "1514.TW", "1519.TW", "1521.TW", "1522.TW", "1524.TW", "1525.TW", "1526.TW",
         "1527.TW", "1528.TW", "1529.TW", "1530.TW", "1531.TW", "1532.TW", "1533.TW", "1535.TW", "1536.TW", "1537.TW",
@@ -87,15 +84,14 @@ def get_industry_stock_pool():
     return sorted(list(set(full_pool)))
 
 # ==========================================
-# 3. Zigzag 轉折邏輯 (從成功碼移植)
+# 3. 轉折波段核心邏輯 (成功代碼移植)
 # ==========================================
-def apply_zigzag(df):
+def apply_zigzag_logic(df):
     df = df.copy()
     df['MA5'] = df['Close'].rolling(5).mean()
     df['MA10'] = df['Close'].rolling(10).mean()
     df['MA20'] = df['Close'].rolling(20).mean()
     
-    # 轉折判斷
     df['State'] = np.where(df['Close'] > df['MA5'], 1, -1)
     df['State_Group'] = (df['State'] != df['State'].shift()).cumsum()
     df['Label'] = None
@@ -114,12 +110,12 @@ def apply_zigzag(df):
     return df, zigzag_points
 
 # ==========================================
-# 4. 掃描核心演算
+# 4. 掃描與運算
 # ==========================================
 total_pool = get_industry_stock_pool()
-if st.button(f"🏛️ 掃描 {len(total_pool)} 檔全產業", type="primary"):
+if st.button(f"啟動 {len(total_pool)} 檔全產業掃描"):
     st.session_state.sitc_stock_cache = {}
-    with st.spinner("正在掃描..."):
+    with st.spinner("掃描中..."):
         df_raw = yf.download(total_pool, period="6mo", auto_adjust=True, group_by='ticker', progress=False)
         rows = []
         for s_id in total_pool:
@@ -136,27 +132,32 @@ if st.button(f"🏛️ 掃描 {len(total_pool)} 檔全產業", type="primary"):
         st.session_state.sitc_report_df = pd.DataFrame(rows)
 
 # ==========================================
-# 5. ECharts 繪圖 (保留均線值與轉折連接線)
+# 5. ECharts 繪圖渲染 (雙面板顯示)
 # ==========================================
 if st.session_state.sitc_report_df is not None and not st.session_state.sitc_report_df.empty:
-    pick = st.selectbox("請選擇個股:", st.session_state.sitc_report_df['股票代碼'].tolist())
-    df, zigzag = apply_zigzag(st.session_state.sitc_stock_cache[pick].tail(60))
+    pick = st.selectbox("請選擇黑馬股:", st.session_state.sitc_report_df['股票代碼'].tolist())
+    df, zigzag = apply_zigzag_logic(st.session_state.sitc_stock_cache[pick].tail(60))
     
-    # 清除 NaN
-    def c(val): return float(val) if pd.notnull(val) else None
+    def clean(val): return float(val) if pd.notnull(val) else None
     
     options = {
-        "tooltip": {"trigger": "axis"},
+        "tooltip": {"trigger": "axis", "axisPointer": {"type": "cross"}},
         "grid": [{"top": "5%", "height": "60%"}, {"top": "75%", "height": "15%"}],
-        "xAxis": [{"type": "category", "data": df.index.strftime('%m/%d').tolist()}, {"type": "category", "data": df.index.strftime('%m/%d').tolist(), "gridIndex": 1}],
+        "xAxis": [
+            {"type": "category", "data": df.index.strftime('%m/%d').tolist()}, 
+            {"type": "category", "data": df.index.strftime('%m/%d').tolist(), "gridIndex": 1}
+        ],
         "yAxis": [{"scale": True}, {"gridIndex": 1, "show": False}],
         "series": [
-            {"type": "candlestick", "data": [[c(r['Open']), c(r['Close']), c(r['Low']), c(r['High'])] for _, r in df.iterrows()]},
-            {"name": "5MA", "type": "line", "data": [c(v) for v in df['MA5']]},
-            {"name": "10MA", "type": "line", "data": [c(v) for v in df['MA10']]},
-            {"name": "20MA", "type": "line", "data": [c(v) for v in df['MA20']]},
-            {"name": "轉折線", "type": "line", "data": [p[1] for p in zigzag], "markPoint": {"data": [{"coord": p, "value": "H" if p[1] == df['High'].max() else "B"} for p in zigzag]}},
-            {"type": "bar", "data": df['Volume'].tolist(), "xAxisIndex": 1, "yAxisIndex": 1}
+            {"type": "candlestick", "data": [[clean(r['Open']), clean(r['Close']), clean(r['Low']), clean(r['High'])] for _, r in df.iterrows()]},
+            {"name": "5MA", "type": "line", "data": [clean(v) for v in df['MA5']], "showSymbol": False},
+            {"name": "10MA", "type": "line", "data": [clean(v) for v in df['MA10']], "showSymbol": False},
+            {"name": "20MA", "type": "line", "data": [clean(v) for v in df['MA20']], "showSymbol": False},
+            {
+                "name": "轉折線", "type": "line", "data": [p[1] for p in zigzag], 
+                "markPoint": {"data": [{"coord": p, "value": "H" if p[1] > df['Close'].iloc[p[0]] else "B"} for p in zigzag]}
+            },
+            {"type": "bar", "data": df['Volume'].tolist(), "xAxisIndex": 1, "yAxisIndex": 1, "itemStyle": {"color": "#7f7f7f"}}
         ]
     }
     st_echarts(options=options, height="600px")
