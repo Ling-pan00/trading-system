@@ -347,7 +347,7 @@ for pool_name in ["🔴 第四池", "🔵 第三池", "🟠 第二池", "🟡 �
         st.subheader(f"📊 策略精選名單 - {pool_name}")
         
         if not saved_df.empty:
-            # 呈現給使用者看的前台表格：自動依照「成交量(張)」由大到小排序，並將圖表用的後台 ticker 隱藏
+            # 呈現給使用者看的前台表格
             display_df = saved_df.drop(columns=["ticker"])
             st.dataframe(display_df, use_container_width=True)
             
@@ -365,29 +365,29 @@ for pool_name in ["🔴 第四池", "🔵 第三池", "🟠 第二池", "🟡 �
             btn_col1, sel_col, btn_col2 = st.columns([1, 4, 1])
             
             with btn_col1:
-                # 確保點擊「上一檔」時不會超出下限
+                # 點擊「上一檔」
                 if st.button("⏮️ 上一檔", key=f"prev_btn_{pool_name}", use_container_width=True):
                     if current_idx > 0:
                         st.session_state[f"idx_{pool_name}"] = current_idx - 1
                         st.rerun()
 
             with sel_col:
-                # 下拉選單：其選取值會與 session_state 內的 index 完全同步
+                # 🔥 關鍵修正：將它的 Key 綁定當前的 index 值，index 一變，這個元件就會被強制重新建立並同步！
                 selected_stock = st.selectbox(
                     f"選擇股票：", 
                     stock_options, 
                     index=st.session_state[f"idx_{pool_name}"],
-                    key=f"select_{pool_name}_internal",
+                    key=f"select_{pool_name}_v2_{st.session_state[f"idx_{pool_name}"]}",
                     label_visibility="collapsed"
                 )
-                # 如果使用者手動手點選單，也要把最新的 index 紀錄回狀態中
+                # 如果使用者手動下拉選別檔，也要同步回狀態中
                 new_idx = stock_options.index(selected_stock)
                 if new_idx != current_idx:
                     st.session_state[f"idx_{pool_name}"] = new_idx
                     st.rerun()
 
             with btn_col2:
-                # 確保點擊「下一檔」時不會超出上限
+                # 點擊「下一檔」
                 if st.button("⏭️ 下一檔", key=f"next_btn_{pool_name}", use_container_width=True):
                     if current_idx < len(stock_options) - 1:
                         st.session_state[f"idx_{pool_name}"] = current_idx + 1
