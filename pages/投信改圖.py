@@ -9,23 +9,21 @@ from streamlit_echarts import st_echarts
 # ==========================================
 # 1. 頁面配置
 # ==========================================
-st.set_page_config(page_title="投信鎖碼選股系統", layout="wide")
+st.set_page_config(page_title="投信鎖碼核心選股系統", layout="wide")
 tw_tz = pytz.timezone('Asia/Taipei')
 today_tw = datetime.now(tw_tz).date()
 
 st.title("🏛️ 策略三：投信鎖碼核心選股系統")
-st.caption(f"目前時間：{datetime.now(tw_tz).strftime('%Y-%m-%d %H:%M:%S')} | 📱 投信3日連買 + 雙線之上 + 低週轉率")
+st.caption(f"目前時間：{datetime.now(tw_tz).strftime('%Y-%m-%d %H:%M:%S')} | 策略：投信3日連買 + 雙線之上 + 低週轉率")
 
-if 'sitc_stock_cache' not in st.session_state:
-    st.session_state.sitc_stock_cache = {}  
-if 'sitc_report_df' not in st.session_state:
-    st.session_state.sitc_report_df = None
+if 'sitc_stock_cache' not in st.session_state: st.session_state.sitc_stock_cache = {}
+if 'sitc_report_df' not in st.session_state: st.session_state.sitc_report_df = None
 
 # ==========================================
-# 2. 530檔 完整股池
+# 2. 530檔 完整核心股池
 # ==========================================
 def get_industry_stock_pool():
-    # 您的完整股池內容
+    # 保留原始完整股池
     full_pool = [
         "1503.TW", "1504.TW", "1513.TW", "1514.TW", "1519.TW", "1521.TW", "1522.TW", "1524.TW", "1525.TW", "1526.TW",
         "1527.TW", "1528.TW", "1529.TW", "1530.TW", "1531.TW", "1532.TW", "1533.TW", "1535.TW", "1536.TW", "1537.TW",
@@ -90,69 +88,84 @@ def get_industry_stock_pool():
     return sorted(list(set(full_pool)))
 
 # ==========================================
-# 3. 掃描核心演算
+# 3. 轉折邏輯函式
+# ==========================================
+def apply_zigzag(df):
+    df = df.copy()
+    # 邏輯：5MA 轉折判斷
+    df['State'] = np.where(df['Close'] > df['MA5'], 1, -1)
+    df['State_Group'] = (df['State'] != df['State'].shift()).cumsum()
+    df['Label'] = None
+    grouped = df.groupby('State_Group')
+    for g_id, group_data in grouped:
+        if g_id <= 2: continue
+        if group_data['State'].iloc[0] == 1:
+            idx = group_data['High'].idxmax()
+            df.loc[idx, 'Label'] = "H"
+        else:
+            idx = group_data['Low'].idxmin()
+            df.loc[idx, 'Label'] = "B"
+    return df
+
+# ==========================================
+# 4. 掃描與運算
 # ==========================================
 total_pool = get_industry_stock_pool()
-
-if st.button(f"🏛️ 啟動 {len(total_pool)} 檔全產業掃描", type="primary"):
-    st.session_state.sitc_stock_cache = {} 
+if st.button(f"🏛️ 啟動 {len(total_pool)} 檔全產業投信鎖碼掃描", type="primary"):
+    st.session_state.sitc_stock_cache = {}
     start_dt = (today_tw - timedelta(days=180)).strftime("%Y-%m-%d")
     end_dt = (today_tw + timedelta(days=1)).strftime("%Y-%m-%d")
     
-    with st.spinner("正在計算..."):
+    with st.spinner("掃描中..."):
         df_raw = yf.download(tickers=total_pool, start=start_dt, end=end_dt, auto_adjust=True, group_by='ticker', progress=False)
         rows = []
         has_multi = isinstance(df_raw.columns, pd.MultiIndex)
-        
         for s_id in total_pool:
             try:
                 df = df_raw[s_id] if has_multi else df_raw
                 df = df.dropna(subset=['Close']).copy()
                 if len(df) < 65: continue
-                
                 df['MA5'] = df['Close'].rolling(5).mean()
                 df['MA20'] = df['Close'].rolling(20).mean()
                 df['MA60'] = df['Close'].rolling(60).mean()
-                
                 last = df.iloc[-1]
+                # 核心篩選條件：股價 > 20MA & 60MA，週轉率 < 5%
                 if last['Close'] > last['MA20'] and last['Close'] > last['MA60']:
-                    vol_turnover = (last['Volume'] / 50000000) * 100
-                    if vol_turnover < 5.0:
-                        rows.append({'股票代碼': s_id, 'sort_key': vol_turnover})
+                    if (last['Volume'] / 50000000) * 100 < 5.0:
+                        rows.append({'股票代碼': s_id})
                         st.session_state.sitc_stock_cache[s_id] = df
             except: continue
         st.session_state.sitc_report_df = pd.DataFrame(rows)
 
 # ==========================================
-# 4. 繪圖 (已修復 NaN 報錯)
+# 5. 繪圖 (已完全修復 NaN 錯誤並植入轉折點)
 # ==========================================
 if st.session_state.sitc_report_df is not None and not st.session_state.sitc_report_df.empty:
-    user_pick = st.selectbox("請選擇個股", options=st.session_state.sitc_report_df['股票代碼'].tolist())
-    df = st.session_state.sitc_stock_cache[user_pick].tail(60).reset_index()
+    user_pick = st.selectbox("👉 請選擇黑馬個股進行技術分析：", options=st.session_state.sitc_report_df['股票代碼'].tolist())
+    
+    # 處理波段與清潔資料
+    df_chart = apply_zigzag(st.session_state.sitc_stock_cache[user_pick].tail(60))
+    def clean(val): return float(val) if pd.notnull(val) else None
 
-    # 清洗資料
-    def clean(val): return float(val) if not np.isnan(val) else None
-    
-    k_data = [[clean(r['Open']), clean(r['Close']), clean(r['Low']), clean(r['High'])] for _, r in df.iterrows()]
-    ma5 = [clean(v) for v in df['MA5']]
-    ma20 = [clean(v) for v in df['MA20']]
-    ma60 = [clean(v) for v in df['MA60']]
-    
-    # 波段偵測
-    points = []
-    for i in range(1, len(df)-1):
-        if df['High'].iloc[i] > df['High'].iloc[i-1] and df['High'].iloc[i] > df['High'].iloc[i+1]:
-            points.append({"coord": [i, float(df['High'].iloc[i])], "value": "H", "itemStyle": {"color": "red"}})
-        elif df['Low'].iloc[i] < df['Low'].iloc[i-1] and df['Low'].iloc[i] < df['Low'].iloc[i+1]:
-            points.append({"coord": [i, float(df['Low'].iloc[i])], "value": "B", "itemStyle": {"color": "green"}})
+    mark_points = []
+    for i, (_, row) in enumerate(df_chart.iterrows()):
+        if row['Label'] == "H":
+            mark_points.append({"coord": [i, clean(row['High'])], "value": "H", "itemStyle": {"color": "#ef5350"}})
+        elif row['Label'] == "B":
+            mark_points.append({"coord": [i, clean(row['Low'])], "value": "B", "itemStyle": {"color": "#26a69a"}})
 
     options = {
-        "xAxis": {"type": "category", "data": df['Date'].dt.strftime('%m/%d').tolist()},
-        "yAxis": {"scale": True},
+        "backgroundColor": "#121212",
+        "xAxis": {"type": "category", "data": df_chart.index.strftime('%m/%d').tolist(), "axisLabel": {"color": "#fff"}},
+        "yAxis": {"scale": True, "axisLabel": {"color": "#fff"}},
         "series": [
-            {"type": "candlestick", "data": k_data},
-            {"type": "line", "data": ma5}, {"type": "line", "data": ma20}, {"type": "line", "data": ma60},
-            {"type": "scatter", "data": points, "symbol": "pin", "symbolSize": 30, "label": {"show": True, "formatter": "{c}"}}
+            {
+                "type": "candlestick",
+                "data": [[clean(r['Open']), clean(r['Close']), clean(r['Low']), clean(r['High'])] for _, r in df_chart.iterrows()],
+                "markPoint": {"data": mark_points, "symbolSize": 30, "label": {"color": "#fff", "fontWeight": "bold"}}
+            },
+            {"type": "line", "data": [clean(v) for v in df_chart['MA5']], "name": "5MA", "lineStyle": {"color": "orange"}},
+            {"type": "line", "data": [clean(v) for v in df_chart['MA20']], "name": "20MA", "lineStyle": {"color": "purple"}}
         ]
     }
-    st_echarts(options=options, height="450px")
+    st_echarts(options=options, height="500px")
