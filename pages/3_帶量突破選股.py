@@ -4,11 +4,12 @@ import yfinance as yf
 from datetime import datetime, timedelta
 import mplfinance as mpf
 
-st.set_page_config(page_title="全量選股", layout="wide")
+st.set_page_config(page_title="強勢選股", layout="wide")
 
+# 1. 確保清單完全正確
 @st.cache_data
 def get_stock_list():
-    # 這是確定的 565 檔列表
+    # 這裡放您的完整 565 檔清單
     return [
         "1503.TW", "1504.TW", "1513.TW", "1514.TW", "1519.TW", "1521.TW", "1522.TW", "1524.TW", "1525.TW", "1526.TW",
         "1527.TW", "1528.TW", "1529.TW", "1530.TW", "1531.TW", "1532.TW", "1533.TW", "1535.TW", "1536.TW", "1537.TW",
@@ -71,16 +72,31 @@ def get_stock_list():
         "6696.TWO", "6830.TWO", "6963.TW", "8454.TW"
     ]
 
-stocks = get_stock_list()
-st.title("📊 選股系統")
-days = st.slider("天數", 30, 365, 120)
-st.metric("總檔數", len(stocks))
-ticker = st.selectbox("選股", stocks)
+# 1. 顯示統計數據
+stock_pool = get_stock_list()
+st.title("📊 強勢選股系統")
+st.metric("總監控檔數", len(stock_pool))
+
+# 2. 顯示日期區間控制
+days = st.slider("選擇歷史天數", 30, 365, 120)
+start_date = datetime.now() - timedelta(days=days)
+st.write(f"資料統計區間: {start_date.strftime('%Y-%m-%d')} 至 {datetime.now().strftime('%Y-%m-%d')}")
+
+# 3. 股票選擇與繪圖
+ticker = st.selectbox("請選擇股票", stock_pool)
 
 if st.button("繪圖"):
-    df = yf.download(ticker, start=datetime.now()-timedelta(days=days))
+    df = yf.download(ticker, start=start_date)
     if not df.empty:
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
-        mpf.plot(df, type='candle', style='charles')
-        st.pyplot()
+            
+        # 計算移動平均線
+        df['MA5'] = df['Close'].rolling(window=5).mean()
+        df['MA10'] = df['Close'].rolling(window=10).mean()
+        
+        ap = [mpf.make_addplot(df['MA5'], color='orange'),
+              mpf.make_addplot(df['MA10'], color='blue')]
+        
+        fig, ax = mpf.plot(df, type='candle', addplot=ap, returnfig=True, style='charles')
+        st.pyplot(fig)
