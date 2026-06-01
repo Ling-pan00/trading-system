@@ -6,13 +6,13 @@ import numpy as np
 import matplotlib.pyplot as plt
 import mplfinance as mpf
 
-# 頁面配置
-st.set_page_config(page_title="強勢帶量突破系統", layout="wide")
-st.title("⚡ 策略四：強勢帶量突破選股系統 (全量穩定版)")
+# 設定頁面
+st.set_page_config(page_title="全量強勢突破選股", layout="wide")
+st.title("⚡ 策略四：565 檔強勢帶量突破選股系統")
 
+# 1. 完整標的列表
 @st.cache_data
 def get_industry_stock_pool():
-    # 放入完整的 565 檔清單
     return [
         "1503.TW", "1504.TW", "1513.TW", "1514.TW", "1519.TW", "1521.TW", "1522.TW", "1524.TW", "1525.TW", "1526.TW",
         "1527.TW", "1528.TW", "1529.TW", "1530.TW", "1531.TW", "1532.TW", "1533.TW", "1535.TW", "1536.TW", "1537.TW",
@@ -75,49 +75,51 @@ def get_industry_stock_pool():
         "6696.TWO", "6830.TWO", "6963.TW", "8454.TW"
     ]
 
+# 2. 繪圖函數
 def draw_zigzag_chart(df, ticker):
+    df = df.apply(pd.to_numeric, errors='coerce').dropna()
     df['5MA'] = df['Close'].rolling(window=5).mean()
     df['State'] = np.where(df['Close'] > df['5MA'], 1, -1)
     df['State_Group'] = (df['State'] != df['State'].shift()).cumsum()
+    
     zigzag_points = []
-    df['Label'] = np.nan
     for g_id, group in df.groupby('State_Group'):
         if len(group) < 2: continue
         if group['State'].iloc[0] == 1:
             idx = group['High'].idxmax()
             zigzag_points.append((df.index.get_loc(idx), df.loc[idx, 'High']))
-            df.loc[idx, 'Label'] = "H"
         else:
             idx = group['Low'].idxmin()
             zigzag_points.append((df.index.get_loc(idx), df.loc[idx, 'Low']))
-            df.loc[idx, 'Label'] = "B"
     
     mc = mpf.make_marketcolors(up='red', down='green', edge='inherit', wick='inherit', volume='in')
     style = mpf.make_mpf_style(marketcolors=mc, gridstyle='--')
-    fig, axlist = mpf.plot(df, type='candle', style=style, returnfig=True, figsize=(10, 5))
+    fig, axlist = mpf.plot(df, type='candle', style=style, returnfig=True, figsize=(10, 5), volume=False)
+    
     if len(zigzag_points) > 1:
         x, y = zip(*zigzag_points)
-        axlist[0].plot(x, y, color='black', alpha=0.5, linewidth=1.5)
+        axlist[0].plot(x, y, color='blue', alpha=0.6, linewidth=1.5, marker='o', markersize=3)
+    
     st.pyplot(fig)
     plt.close(fig)
 
+# 3. 掃描與執行
 total_pool = get_industry_stock_pool()
-if st.button("⚡ 啟動全量掃描"):
-    with st.spinner("正在處理 565 檔數據..."):
-        # 分批處理以提高成功率
-        batch_size = 50
-        for i in range(0, len(total_pool), batch_size):
-            batch = total_pool[i : i+batch_size]
-            data = yf.download(batch, period="3mo", group_by='ticker', auto_adjust=True, progress=False)
-            for t in batch:
-                try:
-                    df = data[t] if len(batch) > 1 else data
-                    if df.empty or len(df) < 22: continue
-                    df.columns = [c.capitalize() for c in df.columns]
-                    
-                    if df['Close'].iloc[-1] > df['High'].iloc[-21:-1].max() and \
-                       df['Volume'].iloc[-1] > df['Volume'].iloc[-21:-1].mean() * 2:
-                        st.subheader(f"✅ 標的：{t}")
-                        draw_zigzag_chart(df, t)
-                except: continue
-        st.success("掃描完成。")
+if st.button("🚀 執行全量選股與繪圖"):
+    batch_size = 50
+    for i in range(0, len(total_pool), batch_size):
+        batch = total_pool[i : i+batch_size]
+        data = yf.download(batch, period="3mo", group_by='ticker', auto_adjust=True, progress=False)
+        
+        for t in batch:
+            try:
+                df = data[t] if len(batch) > 1 and t in data.columns.levels[0] else data
+                if df.empty or len(df) < 22: continue
+                df.columns = [c.capitalize() for c in df.columns]
+                
+                # 策略：突破20日高 + 量增 (2倍)
+                if df['Close'].iloc[-1] > df['High'].iloc[-21:-1].max() and \
+                   df['Volume'].iloc[-1] > df['Volume'].iloc[-21:-1].mean() * 2:
+                    st.subheader(f"✅ 符合標的：{t}")
+                    draw_zigzag_chart(df, t)
+            except: continue
