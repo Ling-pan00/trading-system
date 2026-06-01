@@ -11,8 +11,7 @@ st.set_page_config(page_title="5MA 轉折波段系統", layout="wide")
 st.title("📈 5MA 轉折波段自動標註系統")
 
 # 使用者輸入股票代號
-stock_code = st.text_input("請輸入台灣股票代號 (例如: 2330):", "3303")
-stock_id = f"{stock_code}.TW" if not ("." in stock_code) else stock_code
+stock_code = st.text_input("請輸入台灣股票代號 (例如: 2330, 4768):", "4768")
 
 # 設定查詢時間範圍：半年
 end_date = datetime.today().strftime('%Y-%m-%d')
@@ -20,16 +19,28 @@ start_date = (datetime.today() - timedelta(days=180)).strftime('%Y-%m-%d')
 
 @st.cache_data
 def load_data(ticker, start, end):
+    # 自動嘗試下載，先嘗試 TW，失敗則嘗試 TWO
     df = yf.download(ticker, start=start, end=end)
     return df
 
-try:
+# 邏輯：自動判定尾綴
+if stock_code:
+    # 如果使用者沒有輸入尾綴，我們幫他嘗試兩個組合
+    possible_ids = [f"{stock_code}.TW", f"{stock_code}.TWO"]
+    df = None
+    
     with st.spinner('正在分析中...'):
-        df = load_data(stock_id, start_date, end_date)
+        for ticker in possible_ids:
+            temp_df = load_data(ticker, start_date, end_date)
+            if not temp_df.empty:
+                df = temp_df
+                st.success(f"已成功載入: {ticker}")
+                break
         
-    if df.empty:
-        st.error("找不到該股票資料。")
-    else:
+        if df is None:
+            st.error("找不到該股票資料，請檢查代號是否正確。")
+            st.stop()
+
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
 
@@ -76,26 +87,15 @@ try:
         ma10_info = get_ma_details('10MA')
         ma20_info = get_ma_details('20MA')
 
-        # 【核心修改】使用 HTML / CSS 在圖表正上方渲染一整條漂亮的均線數據列
         st.markdown(f"""
-            <div style="
-                background-color: #f8f9fa; 
-                padding: 10px 15px; 
-                border-radius: 5px; 
-                margin-top: 10px; 
-                margin-bottom: 5px; 
-                font-family: monospace; 
-                font-size: 15px; 
-                font-weight: bold;
-                border-left: 5px solid #6c757d;
-            ">
+            <div style="background-color: #f8f9fa; padding: 10px 15px; border-radius: 5px; margin-top: 10px; margin-bottom: 5px; font-family: monospace; font-size: 15px; font-weight: bold; border-left: 5px solid #6c757d;">
                 <span style="color: #FF9800; margin-right: 20px;">5MA: {ma5_info}</span>
                 <span style="color: #2196F3; margin-right: 20px;">10MA: {ma10_info}</span>
                 <span style="color: #9C27B0;">20MA: {ma20_info}</span>
             </div>
         """, unsafe_allow_html=True)
 
-        # 4. 繪製圖表 (把文字徹底移出這裡，保持圖表內部乾淨)
+        # 4. 繪製圖表
         mc = mpf.make_marketcolors(up='red', down='green', edge='inherit', wick='inherit', volume='in')
         s = mpf.make_mpf_style(marketcolors=mc, gridstyle='--')
 
@@ -127,8 +127,4 @@ try:
                         ha='center', va='bottom' if is_h else 'top',
                         bbox=dict(boxstyle="circle,pad=0.1", fc="yellow", ec="none", alpha=0.6))
 
-        # 網頁呈現圖表
         st.pyplot(fig)
-
-except Exception as e:
-    st.error(f"執行錯誤: {e}")
