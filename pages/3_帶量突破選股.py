@@ -54,3 +54,10 @@ def draw_zigzag_chart(df, ticker):
             mpf.make_addplot(df['10MA'], color='#0000FF', width=1),
             mpf.make_addplot(df['20MA'], color='#800080', width=1)]
     fig, axlist = mpf.plot(df, type='candle', style=s, addplot=apds, returnfig=True, figsize=(10, 6))
+    
+    all_points = sorted(h_points + b_points)
+    if len(all_points) > 1:
+        x_vals, y_vals = zip(*all_points)
+        axlist[0].plot(x_vals, y_vals, color='gray', linewidth=1.5, zorder=2)
+    for x, y in h_points:
+        axlist[0].text(x, y, 'H', color='red', weight='bold', ha='center', va='bottom', bbox=dict(facecolor='yellow', alpha=0.5
