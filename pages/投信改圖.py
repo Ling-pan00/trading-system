@@ -2,25 +2,19 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import yfinance as yf
+import mplfinance as mpf
+import matplotlib.pyplot as plt
 from datetime import datetime, timedelta
 import pytz
-from streamlit_echarts import st_echarts
 
 # ==========================================
-# 1. 頁面與全域設定
+# 1. 頁面與完整 565 檔股池設定
 # ==========================================
 st.set_page_config(page_title="投信鎖碼核心選股系統", layout="wide")
-tw_tz = pytz.timezone('Asia/Taipei')
-today_tw = datetime.now(tw_tz).date()
 
-if 'sitc_stock_cache' not in st.session_state: st.session_state.sitc_stock_cache = {}
-if 'sitc_report_df' not in st.session_state: st.session_state.sitc_report_df = None
-
-# ==========================================
-# 2. 原始完整股池 (完全保留)
-# ==========================================
 def get_industry_stock_pool():
-    full_pool = [
+    # 完整 565 檔股池清單
+    return [
         "1503.TW", "1504.TW", "1513.TW", "1514.TW", "1519.TW", "1521.TW", "1522.TW", "1524.TW", "1525.TW", "1526.TW",
         "1527.TW", "1528.TW", "1529.TW", "1530.TW", "1531.TW", "1532.TW", "1533.TW", "1535.TW", "1536.TW", "1537.TW",
         "1538.TW", "1539.TW", "1540.TW", "1541.TW", "1560.TW", "1582.TW", "1583.TWO", "1584.TWO", "1586.TWO", "1587.TWO",
@@ -81,83 +75,62 @@ def get_industry_stock_pool():
         "6516.TWO", "6549.TWO", "6590.TWO", "6683.TWO", "6690.TW", "6811.TWO", "8044.TWO", "8171.TWO", "8249.TW", "8416.TWO",
         "6696.TWO", "6830.TWO", "6963.TW", "8454.TW"
     ]
-    return sorted(list(set(full_pool)))
 
 # ==========================================
-# 3. 轉折波段核心邏輯 (成功代碼移植)
+# 2. 核心邏輯與繪圖 (使用 mplfinance)
 # ==========================================
-def apply_zigzag_logic(df):
-    df = df.copy()
-    df['MA5'] = df['Close'].rolling(5).mean()
-    df['MA10'] = df['Close'].rolling(10).mean()
-    df['MA20'] = df['Close'].rolling(20).mean()
-    
-    df['State'] = np.where(df['Close'] > df['MA5'], 1, -1)
-    df['State_Group'] = (df['State'] != df['State'].shift()).cumsum()
-    df['Label'] = None
-    
-    zigzag_points = []
-    for g_id, group in df.groupby('State_Group'):
-        if g_id <= 2: continue
-        if group['State'].iloc[0] == 1:
-            idx = group['High'].idxmax()
-            df.loc[idx, 'Label'] = "H"
-            zigzag_points.append([df.index.get_loc(idx), float(df.loc[idx, 'High'])])
-        else:
-            idx = group['Low'].idxmin()
-            df.loc[idx, 'Label'] = "B"
-            zigzag_points.append([df.index.get_loc(idx), float(df.loc[idx, 'Low'])])
-    return df, zigzag_points
-
-# ==========================================
-# 4. 掃描與運算
-# ==========================================
+if 'cache' not in st.session_state: st.session_state.cache = {}
 total_pool = get_industry_stock_pool()
+
 if st.button(f"啟動 {len(total_pool)} 檔全產業掃描"):
-    st.session_state.sitc_stock_cache = {}
     with st.spinner("掃描中..."):
         df_raw = yf.download(total_pool, period="6mo", auto_adjust=True, group_by='ticker', progress=False)
-        rows = []
-        for s_id in total_pool:
+        results = []
+        for s in total_pool:
             try:
-                df = df_raw[s_id] if isinstance(df_raw.columns, pd.MultiIndex) else df_raw
+                df = df_raw[s] if isinstance(df_raw.columns, pd.MultiIndex) else df_raw
                 if len(df) < 65: continue
                 # 篩選條件
                 if df['Close'].iloc[-1] > df['Close'].rolling(20).mean().iloc[-1] and \
                    df['Close'].iloc[-1] > df['Close'].rolling(60).mean().iloc[-1] and \
                    (df['Volume'].iloc[-1] / 50000000) * 100 < 5.0:
-                    rows.append({'股票代碼': s_id})
-                    st.session_state.sitc_stock_cache[s_id] = df
+                    results.append(s)
+                    st.session_state.cache[s] = df
             except: continue
-        st.session_state.sitc_report_df = pd.DataFrame(rows)
+        st.session_state.results = results
 
-# ==========================================
-# 5. ECharts 繪圖渲染 (雙面板顯示)
-# ==========================================
-if st.session_state.sitc_report_df is not None and not st.session_state.sitc_report_df.empty:
-    pick = st.selectbox("請選擇黑馬股:", st.session_state.sitc_report_df['股票代碼'].tolist())
-    df, zigzag = apply_zigzag_logic(st.session_state.sitc_stock_cache[pick].tail(60))
+if 'results' in st.session_state:
+    pick = st.selectbox("請選擇個股:", st.session_state.results)
+    df = st.session_state.cache[pick].tail(60).copy()
     
-    def clean(val): return float(val) if pd.notnull(val) else None
+    # 計算均線與轉折
+    df['MA5'] = df['Close'].rolling(5).mean()
+    df['MA10'] = df['Close'].rolling(10).mean()
+    df['MA20'] = df['Close'].rolling(20).mean()
+    df['State'] = np.where(df['Close'] > df['MA5'], 1, -1)
+    df['State_Group'] = (df['State'] != df['State'].shift()).cumsum()
     
-    options = {
-        "tooltip": {"trigger": "axis", "axisPointer": {"type": "cross"}},
-        "grid": [{"top": "5%", "height": "60%"}, {"top": "75%", "height": "15%"}],
-        "xAxis": [
-            {"type": "category", "data": df.index.strftime('%m/%d').tolist()}, 
-            {"type": "category", "data": df.index.strftime('%m/%d').tolist(), "gridIndex": 1}
-        ],
-        "yAxis": [{"scale": True}, {"gridIndex": 1, "show": False}],
-        "series": [
-            {"type": "candlestick", "data": [[clean(r['Open']), clean(r['Close']), clean(r['Low']), clean(r['High'])] for _, r in df.iterrows()]},
-            {"name": "5MA", "type": "line", "data": [clean(v) for v in df['MA5']], "showSymbol": False},
-            {"name": "10MA", "type": "line", "data": [clean(v) for v in df['MA10']], "showSymbol": False},
-            {"name": "20MA", "type": "line", "data": [clean(v) for v in df['MA20']], "showSymbol": False},
-            {
-                "name": "轉折線", "type": "line", "data": [p[1] for p in zigzag], 
-                "markPoint": {"data": [{"coord": p, "value": "H" if p[1] > df['Close'].iloc[p[0]] else "B"} for p in zigzag]}
-            },
-            {"type": "bar", "data": df['Volume'].tolist(), "xAxisIndex": 1, "yAxisIndex": 1, "itemStyle": {"color": "#7f7f7f"}}
-        ]
-    }
-    st_echarts(options=options, height="600px")
+    points = []
+    for g_id, group in df.groupby('State_Group'):
+        if g_id <= 2: continue
+        if group['State'].iloc[0] == 1:
+            idx = group['High'].idxmax()
+            points.append((df.index.get_loc(idx), df.loc[idx, 'High'], "H"))
+        else:
+            idx = group['Low'].idxmin()
+            points.append((df.index.get_loc(idx), df.loc[idx, 'Low'], "B"))
+            
+    # 繪圖
+    mc = mpf.make_marketcolors(up='red', down='green', edge='inherit', wick='inherit', volume='in')
+    s = mpf.make_mpf_style(marketcolors=mc, gridstyle='--')
+    ap = [mpf.make_addplot(df[['MA5', 'MA10', 'MA20']])]
+    fig, axes = mpf.plot(df, type='candle', style=s, addplot=ap, returnfig=True, volume=True, panel_ratios=(4,1))
+    
+    if points:
+        x, y, labels = zip(*points)
+        axes[0].plot(x, y, color='black', alpha=0.5, linewidth=1.5)
+        for i, (px, py, l) in enumerate(points):
+            axes[0].annotate(l, (px, py), color='white', ha='center', va='center', 
+                             bbox=dict(boxstyle='circle', fc='red' if l=='H' else 'green'))
+    
+    st.pyplot(fig)
