@@ -6,10 +6,10 @@ import mplfinance as mpf
 import matplotlib.pyplot as plt
 
 # ==========================================
-# 1. 完整股池定義 (565 檔)
+# 1. 完整 565 檔股池定義 (請確保清單完整)
 # ==========================================
 def get_industry_stock_pool():
-    # 這裡放入您完整的 565 檔清單
+    # 這裡放入您的完整 565 檔清單
     return [
         "1503.TW", "1504.TW", "1513.TW", "1514.TW", "1519.TW", "1521.TW", "1522.TW", "1524.TW", "1525.TW", "1526.TW",
         "1527.TW", "1528.TW", "1529.TW", "1530.TW", "1531.TW", "1532.TW", "1533.TW", "1535.TW", "1536.TW", "1537.TW",
@@ -29,40 +29,38 @@ def get_industry_stock_pool():
         "6435.TWO", "6451.TW", "6462.TWO", "6488.TWO", "6494.TWO", "6510.TWO", "6526.TW", "6531.TW", "6533.TW", "6548.TWO",
         "6568.TWO", "6573.TWO", "6679.TWO", "6684.TWO", "6719.TW", "6732.TWO", "6756.TW", "6770.TW", "6789.TW", "6806.TW",
         "6834.TWO", "8016.TW", "8028.TWO", "8054.TWO", "8081.TWO", "8110.TW", "8131.TW", "8150.TW", "8261.TW", "8271.TW"
-        # ... (其餘 565 檔)
+        # ... (請確保此處補齊所有 565 檔代號)
     ]
 
 # ==========================================
-# 2. 核心邏輯與完整繪圖函式
+# 2. 核心邏輯與完整執行
 # ==========================================
 st.set_page_config(layout="wide")
-
 if 'cache' not in st.session_state: st.session_state.cache = {}
+
 pool = get_industry_stock_pool()
 
 if st.button(f"執行掃描 ({len(pool)} 檔)"):
     df_raw = yf.download(pool, period="6mo", auto_adjust=True, group_by='ticker', progress=False)
-    hits = []
+    results = []
     for s in pool:
         df = df_raw[s] if isinstance(df_raw.columns, pd.MultiIndex) else df_raw
         if len(df) < 65: continue
-        # 篩選條件
+        # 您的篩選邏輯
         if df['Close'].iloc[-1] > df['Close'].rolling(20).mean().iloc[-1] and \
            df['Close'].iloc[-1] > df['Close'].rolling(60).mean().iloc[-1] and \
            (df['Volume'].iloc[-1] / 50000000) * 100 < 5.0:
-            hits.append(s)
+            results.append(s)
             st.session_state.cache[s] = df
-    st.session_state.hits = hits
+    st.session_state.results = results
 
-if 'hits' in st.session_state:
-    pick = st.selectbox("選擇個股:", st.session_state.hits)
+if 'results' in st.session_state:
+    pick = st.selectbox("選擇個股:", st.session_state.results)
     df = st.session_state.cache[pick].tail(60).copy()
     
-    # 均線計算
+    # 計算 MA 與轉折
     df['MA5'] = df['Close'].rolling(5).mean()
     df['MA20'] = df['Close'].rolling(20).mean()
-    
-    # 轉折點計算
     df['State'] = np.where(df['Close'] > df['MA5'], 1, -1)
     df['State_Group'] = (df['State'] != df['State'].shift()).cumsum()
     
@@ -72,7 +70,7 @@ if 'hits' in st.session_state:
         idx = g['High'].idxmax() if g['State'].iloc[0] == 1 else g['Low'].idxmin()
         pts.append((df.index.get_loc(idx), df.loc[idx, 'High'] if g['State'].iloc[0] == 1 else df.loc[idx, 'Low'], "H" if g['State'].iloc[0] == 1 else "B"))
     
-    # 強制使用 mplfinance 標準風格，複製您成功的圖表視覺
+    # 精準重現樣式
     mc = mpf.make_marketcolors(up='red', down='green', edge='inherit', wick='inherit', volume='in')
     s = mpf.make_mpf_style(marketcolors=mc, gridstyle='--', y_on_right=True)
     
@@ -83,7 +81,7 @@ if 'hits' in st.session_state:
     
     fig, ax = mpf.plot(df, type='candle', style=s, addplot=ap, returnfig=True, volume=True, panel_ratios=(4,1), figsize=(12, 7))
     
-    # 繪製黑色轉折連接線與 H/B 圓點標記
+    # 繪製黑色轉折線
     if pts:
         x, y, labels = zip(*pts)
         ax[0].plot(x, y, color='black', alpha=0.6, linewidth=1.5)
