@@ -5,7 +5,7 @@ import mplfinance as mpf
 import numpy as np
 import twstock
 
-# --- 頁面配置 ---
+# 設定頁面
 st.set_page_config(page_title="三池強力監控系統 Pro", layout="wide")
 st.title("🚀 三池強力監控系統 Pro")
 
@@ -100,9 +100,14 @@ if "breakout" in st.session_state:
     c2.metric("10MA", f"{last['10MA']:.2f}", "▲" if last['10MA'] > prev['10MA'] else "▼")
     c3.metric("20MA", f"{last['20MA']:.2f}", "▲" if last['20MA'] > prev['20MA'] else "▼")
     
-    # 繪圖
-    fig, axlist = mpf.plot(df_k.iloc[-90:], type='candle', returnfig=True, volume=True, figsize=(12, 8),
-                           addplot=[mpf.make_addplot(df_k[['5MA', '10MA', '20MA']].iloc[-90:], color=dict(zip(['5MA','10MA','20MA'],['orange','blue','purple'])))])
+    # 修正後的 addplot 繪圖
+    ap = [
+        mpf.make_addplot(df_k['5MA'].iloc[-90:], color='orange'),
+        mpf.make_addplot(df_k['10MA'].iloc[-90:], color='blue'),
+        mpf.make_addplot(df_k['20MA'].iloc[-90:], color='purple')
+    ]
+    
+    fig, axlist = mpf.plot(df_k.iloc[-90:], type='candle', returnfig=True, volume=True, figsize=(12, 8), addplot=ap)
     ax = axlist[0]
     
     points = get_zigzag_points(df_k)
