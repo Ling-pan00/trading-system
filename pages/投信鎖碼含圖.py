@@ -1,16 +1,13 @@
 import streamlit as st
 import pandas as pd
+import yfinance as yf
+import mplfinance as mpf
+import matplotlib.pyplot as plt
 import requests
 import time
 from datetime import datetime, timedelta
-# 將繪圖相關庫全部移至頂端，確保不會在執行中途出現 NameError
-import yfinance as yf
-import matplotlib.pyplot as plt
 
-st.set_page_config(page_title="投信鎖碼股 V9.2", layout="wide")
-st.title("投信鎖碼股 V9.2（穩定實戰版）")
-
-# --- 您的原始核心邏輯 (一字未改) ---
+# --- 1. 投信資料載入 (您的核心) ---
 def get_day(date):
     url = f"https://www.twse.com.tw/rwd/zh/fund/TWT44U?date={date}&response=json"
     try:
@@ -31,69 +28,54 @@ def load(days=30):
         if df is not None and not df.empty: all_df.append(df)
         time.sleep(0.02)
         if len(all_df) >= days: break
-    if not all_df: return pd.DataFrame()
-    df = pd.concat(all_df, ignore_index=True)
-    if "證券代號" in df.columns:
-        df = df.sort_values(["證券代號", "date"])
-    return df
+    return pd.concat(all_df, ignore_index=True) if all_df else pd.DataFrame()
 
-def find(df, keys):
-    for c in df.columns:
-        for k in keys:
-            if k in str(c): return c
-    return None
-
-# --- 獨立且防錯的繪圖模組 ---
-def draw_chart_safe(ticker_code):
+# --- 2. 專業轉折繪圖 (含 K 線, MA, H/B 標記) ---
+def draw_pro_chart(ticker_code):
     try:
-        # 自動處理上市/上櫃代號後綴
-        code = str(ticker_code).strip()
-        ticker = f"{code}.TW" if int(code) < 2000 else f"{code}.TWO"
-        
-        st.write(f"正在嘗試獲取 {ticker} 市場數據...")
+        # 自動識別上市/上櫃
+        ticker = f"{ticker_code}.TW" if int(ticker_code) < 2000 else f"{ticker_code}.TWO"
         df = yf.download(ticker, period="3mo", progress=False)
+        if df.empty: raise ValueError("無數據")
+
+        # 計算轉折點 (H/B 邏輯)
+        df['h_point'] = df['High'][(df['High'] > df['High'].shift(1)) & (df['High'] > df['High'].shift(-1))]
+        df['l_point'] = df['Low'][(df['Low'] < df['Low'].shift(1)) & (df['Low'] < df['Low'].shift(-1))]
+
+        # 設定圖表元素
+        addplots = [
+            mpf.make_addplot(df['h_point'], type='scatter', markersize=80, marker='v', color='red'),
+            mpf.make_addplot(df['l_point'], type='scatter', markersize=80, marker='^', color='green')
+        ]
         
-        if df.empty:
-            st.warning(f"⚠️ 找不到 {ticker} 的市場數據，請確認該代號。")
-            return
-            
-        fig, ax = plt.subplots(figsize=(10, 4))
-        ax.plot(df['Close'], label='Close Price')
-        ax.set_title(f"{ticker} Price")
+        # 繪製
+        fig, ax = mpf.plot(df, type='candle', style='charles', volume=True, 
+                           addplot=addplots, mav=(5, 10, 20), returnfig=True, figsize=(10, 6))
         st.pyplot(fig)
     except Exception as e:
-        st.error(f"繪圖模組執行異常 (已攔截): {e}")
+        st.warning(f"圖表無法顯示 (代號 {ticker_code}): {e}")
 
-# --- 主程式區 (完全保護您的核心篩選) ---
-if st.button("開始 V9.2"):
+# --- 3. 主程式介面 ---
+st.set_page_config(page_title="投信鎖碼股 Pro", layout="wide")
+st.title("投信鎖碼股 V9.2 (完整版)")
+
+if st.button("執行篩選"):
     df = load(30)
-    if df.empty: st.error("沒有抓到資料"); st.stop()
-
-    stock_col = find(df, ["證券代號"])
-    buy_col = find(df, ["買賣超"])
-    if stock_col is None or buy_col is None: st.error("欄位解析失敗"); st.stop()
-
-    df[buy_col] = pd.to_numeric(df[buy_col], errors="coerce").fillna(0)
-    result = []
-
-    for stock, g in df.groupby(stock_col):
-        try:
-            g = g.sort_values("date")
-            series = g[buy_col].values
-            if len(series) < 10: continue
-            last3_sum, last10_sum = series[-3:].sum(), series[-10:].sum()
-            if (series[-3:] < 0).sum() >= 2 or last10_sum <= 0 or abs(last10_sum) < 20: continue
-            
-            result.append({
-                "股票": stock,
-                "強度": round(last3_sum / (abs(last10_sum) + 1), 4),
-                "近10日買超": int(last10_sum)
-            })
-        except: continue
-
-    out = pd.DataFrame(result)
-    st.dataframe(out.sort_values("強度", ascending=False))
+    if df.empty: st.stop()
     
-    # 獨立的選股繪圖框，失敗也不會影響上方表格
-    sel = st.selectbox("選擇股票查看轉折圖:", out["股票"].unique())
-    if sel: draw_chart_safe(sel)
+    # 手動指定欄位，確保不崩潰
+    df["買賣超"] = pd.to_numeric(df["買賣超"], errors="coerce").fillna(0)
+    result = []
+    
+    # 篩選邏輯
+    for stock, g in df.groupby("證券代號"):
+        series = g.sort_values("date")["買賣超"].values
+        if len(series) < 10 or (series[-3:] < 0).sum() >= 2 or series[-10:].sum() <= 0: continue
+        result.append({"股票": stock, "強度": round(series[-3:].sum() / (abs(series[-10:].sum()) + 1), 4)})
+
+    out = pd.DataFrame(result).sort_values("強度", ascending=False)
+    st.dataframe(out)
+
+    # 專業圖表選擇器
+    sel = st.selectbox("選擇股票查看專業圖:", out["股票"].unique())
+    if sel: draw_pro_chart(sel)
