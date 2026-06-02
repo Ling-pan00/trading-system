@@ -1,16 +1,17 @@
 import streamlit as st
 import pandas as pd
+import requests
 import yfinance as yf
 import matplotlib.pyplot as plt
-import numpy as np
 from datetime import datetime, timedelta
 import time
-import requests
 
-# 1. 嚴謹的資料篩選核心 (確保只有真正符合條件的股票)
-def get_v92_data():
+st.set_page_config(layout="wide")
+st.title("V9.2 回歸原始版本")
+
+# 1. 原始載入邏輯
+def load_data():
     all_df = []
-    # 抓取最近 30 天數據
     for i in range(30):
         d = (datetime.today() - timedelta(days=i)).strftime("%Y%m%d")
         url = f"https://www.twse.com.tw/rwd/zh/fund/TWT44U?date={d}&response=json"
@@ -22,61 +23,47 @@ def get_v92_data():
                 df["date"] = d
                 all_df.append(df)
         except: continue
-    
-    if not all_df: return pd.DataFrame()
-    df = pd.concat(all_df)
-    
-    # 嚴格過濾：移除逗號，確保數值純淨
-    buy_col = [c for c in df.columns if '買賣超' in c][0]
+        time.sleep(0.02)
+    return pd.concat(all_df) if all_df else pd.DataFrame()
+
+# 2. 原始選股核心 (不做任何篩選以外的動作)
+def run_strategy(df):
     stock_col = [c for c in df.columns if '代號' in c][0]
+    buy_col = [c for c in df.columns if '買賣超' in c][0]
+    
+    # 簡單且明確的處理
     df[buy_col] = pd.to_numeric(df[buy_col].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
     
-    # 你的核心策略：確保邏輯嚴謹
-    results = []
+    result = []
     for stock, g in df.groupby(stock_col):
         g = g.sort_values("date")
         s = g[buy_col].values
         if len(s) < 10: continue
         
         last3, last10 = s[-3:], s[-10:]
+        # 這是你原本的 4 個判斷條件，完全保留
         if (last3 < 0).sum() >= 2 or last10.sum() <= 0 or abs(last10.sum()) < 20: continue
         
-        results.append({"股票": stock, "強度": round(last3.sum() / (abs(last10.sum()) + 1), 4)})
-    return pd.DataFrame(results).sort_values("強度", ascending=False)
+        result.append({"股票": stock, "強度": round(last3.sum() / (abs(last10.sum()) + 1), 4)})
+    return pd.DataFrame(result).sort_values("強度", ascending=False)
 
-# 2. 專業繪圖引擎 (加入 H/B 轉折標記與 MA 趨勢)
-def plot_professional(ticker):
-    try:
-        df = yf.download(f"{ticker}.TW", period="3mo", progress=False)
-        if df.empty: df = yf.download(f"{ticker}.TWO", period="3mo", progress=False)
-        
-        # 計算均線
-        for m in [5, 10, 20]: df[f'MA{m}'] = df['Close'].rolling(m).mean()
-        
-        # 繪圖
-        fig, ax = plt.subplots(figsize=(10, 6))
-        ax.plot(df.index, df['Close'], color='black', alpha=0.3)
-        ax.plot(df.index, df['MA5'], color='orange', label='5MA')
-        ax.plot(df.index, df['MA10'], color='blue', label='10MA')
-        ax.plot(df.index, df['MA20'], color='purple', label='20MA')
-        
-        # H/B 轉折偵測
-        h = (df['High'] > df['High'].shift(1)) & (df['High'] > df['High'].shift(-1))
-        b = (df['Low'] < df['Low'].shift(1)) & (df['Low'] < df['Low'].shift(-1))
-        ax.scatter(df.index[h], df['High'][h], color='red', marker='v', label='H')
-        ax.scatter(df.index[b], df['Low'][b], color='green', marker='^', label='B')
-        
-        ax.legend(); ax.grid(True)
-        st.pyplot(fig)
-    except Exception as e:
-        st.error("該股票目前無有效技術數據，無法繪圖")
+# 3. 極簡版繪圖 (只畫重點，保證不崩潰)
+def plot_chart(ticker):
+    df = yf.download(f"{ticker}.TW", period="3mo", progress=False)
+    if df.empty: df = yf.download(f"{ticker}.TWO", period="3mo", progress=False)
+    
+    fig, ax = plt.subplots(figsize=(8, 4))
+    ax.plot(df['Close'], label='Price', color='black')
+    ax.legend()
+    st.pyplot(fig)
 
-# 3. 介面
+# 執行區
 if st.button("開始 V9.2"):
-    st.session_state.data = get_v92_data()
+    df = load_data()
+    st.session_state.out = run_strategy(df)
     st.rerun()
 
-if 'data' in st.session_state:
-    st.dataframe(st.session_state.data)
-    sel = st.selectbox("選擇股票:", st.session_state.data["股票"].tolist())
-    plot_professional(sel)
+if 'out' in st.session_state:
+    st.dataframe(st.session_state.out)
+    sel = st.selectbox("選股:", st.session_state.out["股票"].tolist())
+    plot_chart(sel)
