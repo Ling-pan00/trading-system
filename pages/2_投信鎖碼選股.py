@@ -4,8 +4,8 @@ import requests
 from datetime import datetime, timedelta
 import time
 
-st.set_page_config(page_title="投信鎖碼股 V9.1", layout="wide")
-st.title("投信鎖碼股 V9.1（防爆量修正版）")
+st.set_page_config(page_title="投信鎖碼股 V9.2", layout="wide")
+st.title("投信鎖碼股 V9.2（平衡實戰版）")
 
 # =========================
 # TWSE 抓資料
@@ -28,7 +28,7 @@ def get_day(date):
 
 
 # =========================
-# 連續抓多日
+# 多日載入
 # =========================
 def load(days=30):
     all_df = []
@@ -51,14 +51,15 @@ def load(days=30):
 
     df = pd.concat(all_df, ignore_index=True)
 
-    # ⚠️ 保證時間排序正確
-    df = df.sort_values(["證券代號", "date"])
+    # 保證排序正確
+    if "證券代號" in df.columns:
+        df = df.sort_values(["證券代號", "date"])
 
     return df
 
 
 # =========================
-# 找欄位（防TWSE改版）
+# 欄位偵測
 # =========================
 def find(df, keys):
     for c in df.columns:
@@ -69,9 +70,9 @@ def find(df, keys):
 
 
 # =========================
-# 開始執行
+# 開始
 # =========================
-if st.button("開始 V9.1"):
+if st.button("開始 V9.2"):
 
     df = load(30)
 
@@ -93,7 +94,7 @@ if st.button("開始 V9.1"):
     result = []
 
     # =========================
-    # 🔥 鎖碼核心邏輯（修正版）
+    # 🔥 鎖碼核心（平衡版）
     # =========================
     for stock, g in df.groupby(stock_col):
 
@@ -112,34 +113,37 @@ if st.button("開始 V9.1"):
             last10_sum = last10.sum()
 
             # =========================
-            # ❌ 濾網1：連續買超（核心）
+            # ✔ 條件1：允許短期洗盤（最多1天負）
             # =========================
-            if (last3 <= 0).any():
+            if (last3 < 0).sum() >= 2:
                 continue
 
             # =========================
-            # ❌ 濾網2：大方向必須偏多
+            # ✔ 條件2：中期方向仍偏多
             # =========================
             if last10_sum <= 0:
                 continue
 
             # =========================
-            # ❌ 濾網3：避免小單雜訊
+            # ✔ 條件3：避免太小雜訊
             # =========================
-            if abs(last10_sum) < 50:
+            if abs(last10_sum) < 20:
                 continue
 
             # =========================
-            # ❌ 濾網4：至少要有「加碼趨勢」
+            # ✔ 穩定度（避免亂飆）
             # =========================
-            if last3_sum < (last10_sum / 3):
-                continue
+            stability = last10_sum / (abs(last3_sum) + 1)
 
+            # =========================
+            # ✔ 強度（鎖碼核心）
+            # =========================
             strength = last3_sum / (abs(last10_sum) + 1)
 
             result.append({
                 "股票": stock,
                 "強度": round(strength, 4),
+                "穩定度": round(stability, 4),
                 "近3日買超": int(last3_sum),
                 "近10日買超": int(last10_sum)
             })
@@ -150,11 +154,11 @@ if st.button("開始 V9.1"):
     out = pd.DataFrame(result)
 
     if out.empty:
-        st.warning("目前沒有符合『鎖碼條件』的股票")
+        st.warning("目前市場沒有明顯投信鎖碼（偏整理盤）")
         st.stop()
 
     out = out.sort_values("強度", ascending=False)
 
-    st.success(f"鎖碼完成：{len(out)} 檔（已去雜訊版）")
+    st.success(f"完成：{len(out)} 檔（平衡鎖碼版）")
 
     st.dataframe(out)
