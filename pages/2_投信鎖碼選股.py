@@ -8,8 +8,8 @@ import yfinance as yf
 # =========================
 # Page
 # =========================
-st.set_page_config(page_title="投信鎖碼股 V5.1", layout="wide")
-st.title("投信鎖碼股篩選器 V5.1（穩定打分版）")
+st.set_page_config(page_title="投信鎖碼股 V5.2", layout="wide")
+st.title("投信鎖碼股篩選器 V5.2（剔除ETF版）")
 
 # =========================
 # TWSE資料
@@ -111,12 +111,19 @@ def get_price(stock):
         return None
 
 # =========================
+# ETF剔除（核心）
+# =========================
+def is_etf(code):
+    code = str(code)
+    return code.startswith("00")
+
+# =========================
 # UI
 # =========================
 days = st.slider("回溯天數", 40, 100, 60)
 min_keep = st.slider("最少保留檔數", 5, 50, 20)
 
-if st.button("開始 V5.1 篩選"):
+if st.button("開始 V5.2 篩選（剔除ETF）"):
 
     df = load_data(days)
 
@@ -134,6 +141,9 @@ if st.button("開始 V5.1 篩選"):
     df["買超張數"] = df[buy_col] / 1000
     df["日期"] = pd.to_datetime(df["日期"])
 
+    # =========================
+    # 名稱
+    # =========================
     name_map = {}
     if name_col:
         name_map = (
@@ -146,13 +156,16 @@ if st.button("開始 V5.1 篩選"):
     result = []
 
     # =========================
-    # 核心計算（打分模型）
+    # 核心計算
     # =========================
     for stock, g in df.groupby(stock_col):
 
+        # 🔥 ETF直接跳過
+        if is_etf(stock):
+            continue
+
         g = g.sort_values("日期")
 
-        # 投信強度（3天 vs 10天）
         last10 = g.tail(10)["買超張數"].sum()
         last3 = g.tail(3)["買超張數"].sum()
 
@@ -173,9 +186,6 @@ if st.button("開始 V5.1 篩選"):
         breakout_score = 1 if price_data["突破"] else 0
         ma_up_score = 1 if price_data["MA20上升"] else 0
 
-        # =========================
-        # 🔥 打分（核心）
-        # =========================
         score = (
             inst_strength * 40 +
             buy20 * 0.02 +
@@ -184,7 +194,6 @@ if st.button("開始 V5.1 篩選"):
             fake_penalty
         )
 
-        # 只排除極弱
         if price_data["收盤價"] <= price_data["MA20"]:
             continue
 
@@ -204,17 +213,16 @@ if st.button("開始 V5.1 篩選"):
     rank_df = pd.DataFrame(result)
 
     if rank_df.empty:
-        st.error("沒有結果（請再放寬回溯天數或市場條件）")
+        st.error("沒有結果（ETF已剔除後可能條件偏嚴）")
         st.stop()
 
     rank_df = rank_df.sort_values("分數", ascending=False)
 
-    # 防呆保底
     if len(rank_df) < min_keep:
-        st.warning("結果太少 → 自動補足")
+        st.warning("結果太少 → 自動補足（但仍為非ETF股票）")
         rank_df = rank_df.head(min_keep)
 
-    st.success(f"V5.1 結果：{len(rank_df)} 檔")
+    st.success(f"V5.2 結果：{len(rank_df)} 檔（已剔除ETF）")
 
     st.dataframe(rank_df, use_container_width=True)
 
@@ -223,6 +231,6 @@ if st.button("開始 V5.1 篩選"):
     st.download_button(
         "下載CSV",
         csv,
-        "投信鎖碼V5_1.csv",
+        "投信鎖碼V5_2.csv",
         "text/csv"
     )
