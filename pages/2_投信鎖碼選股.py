@@ -4,8 +4,8 @@ import requests
 from datetime import datetime, timedelta
 import time
 
-st.set_page_config(page_title="投信鎖碼股 V9.3", layout="wide")
-st.title("投信鎖碼股 V9.3（加：價位 + 外資濾網）")
+st.set_page_config(page_title="投信鎖碼股 V9.3-lite", layout="wide")
+st.title("投信鎖碼股 V9.3-lite（穩定不空版）")
 
 # =========================
 # TWSE 投信資料
@@ -15,7 +15,6 @@ def get_day(date):
     try:
         r = requests.get(url, timeout=10)
         data = r.json()
-
         if data.get("stat") != "OK":
             return None
 
@@ -27,14 +26,13 @@ def get_day(date):
 
 
 # =========================
-# 外資資料（TWT38U）
+# 外資資料
 # =========================
 def get_foreign(date):
     url = f"https://www.twse.com.tw/rwd/zh/fund/TWT38U?date={date}&response=json"
     try:
         r = requests.get(url, timeout=10)
         data = r.json()
-
         if data.get("stat") != "OK":
             return None
 
@@ -46,12 +44,11 @@ def get_foreign(date):
 
 
 # =========================
-# 抓多日
+# 抓資料
 # =========================
 def load(days=30):
     inst = []
     foreign = []
-
     today = datetime.today()
 
     for i in range(days * 2):
@@ -60,14 +57,14 @@ def load(days=30):
         df1 = get_day(d)
         df2 = get_foreign(d)
 
-        if df1 is not None:
+        if df1 is not None and not df1.empty:
             inst.append(df1)
-        if df2 is not None:
+        if df2 is not None and not df2.empty:
             foreign.append(df2)
 
         time.sleep(0.02)
 
-        if len(inst) >= days and len(foreign) >= days:
+        if len(inst) >= days:
             break
 
     inst_df = pd.concat(inst, ignore_index=True) if inst else pd.DataFrame()
@@ -77,7 +74,7 @@ def load(days=30):
 
 
 # =========================
-# 欄位抓取
+# 欄位偵測
 # =========================
 def find(df, keys):
     for c in df.columns:
@@ -90,7 +87,7 @@ def find(df, keys):
 # =========================
 # 主程式
 # =========================
-if st.button("開始 V9.3"):
+if st.button("開始 V9.3-lite"):
 
     inst_df, foreign_df = load(30)
 
@@ -104,9 +101,9 @@ if st.button("開始 V9.3"):
     inst_df[buy_col] = pd.to_numeric(inst_df[buy_col], errors="coerce").fillna(0)
 
     # =========================
-    # 外資整理
+    # 外資整理（安全版）
     # =========================
-    foreign_result = {}
+    foreign_map = {}
     if not foreign_df.empty:
         f_stock = find(foreign_df, ["證券代號"])
         f_buy = find(foreign_df, ["買賣超"])
@@ -115,13 +112,13 @@ if st.button("開始 V9.3"):
 
         for stock, g in foreign_df.groupby(f_stock):
             g = g.sort_values("date")
-            foreign_result[stock] = g[f_buy].tail(10).sum()
+            foreign_map[stock] = g[f_buy].tail(10).sum()
 
-    # =========================
-    # 投信鎖碼核心
-    # =========================
     result = []
 
+    # =========================
+    # 鎖碼核心
+    # =========================
     for stock, g in inst_df.groupby(stock_col):
 
         try:
@@ -138,38 +135,35 @@ if st.button("開始 V9.3"):
             last10_sum = last10.sum()
 
             # =========================
-            # ⭐ 條件1：允許1天洗盤
+            # ✔ 條件1：允許輕微洗盤
             # =========================
             if (last3 < 0).sum() >= 2:
                 continue
 
             # =========================
-            # ⭐ 條件2：投信偏多
+            # ✔ 條件2：投信方向要偏多
             # =========================
-            if last10_sum <= 0:
+            if last10_sum <= 5:
                 continue
 
             # =========================
-            # ⭐ 條件3：避免太小雜訊
+            # ✔ 條件3：去雜訊（放寬）
             # =========================
-            if abs(last10_sum) < 20:
+            if abs(last10_sum) < 10:
                 continue
 
             # =========================
-            # ⭐ 條件4：外資不能大賣（你要的第3點）
+            # ✔ 條件4：外資「不能大賣」（放寬版）
             # =========================
-            foreign_sum = foreign_result.get(stock, 0)
+            foreign_sum = foreign_map.get(stock, 0)
 
-            if foreign_sum < -30:   # 外資大賣直接剔除
+            if foreign_sum < -120:   # 放寬，避免誤殺
                 continue
 
             # =========================
-            # ⭐ 條件5：股價位置（簡化版）
+            # ✔ 穩定度 & 強度
             # =========================
-            # 沒接價格API，用「穩定替代法」：
-            # 用投信連續性當作 proxy（避免再拉 yfinance 爆量）
             stability = last10_sum / (abs(last3_sum) + 1)
-
             strength = last3_sum / (abs(last10_sum) + 1)
 
             result.append({
@@ -186,11 +180,10 @@ if st.button("開始 V9.3"):
     out = pd.DataFrame(result)
 
     if out.empty:
-        st.warning("目前沒有符合『鎖碼 + 外資條件』股票")
+        st.warning("目前市場偏整理，無明顯鎖碼股（正常）")
         st.stop()
 
     out = out.sort_values("強度", ascending=False)
 
-    st.success(f"完成：{len(out)} 檔（V9.3 精簡鎖碼）")
-
+    st.success(f"完成：{len(out)} 檔（穩定版）")
     st.dataframe(out)
