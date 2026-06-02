@@ -8,8 +8,8 @@ import yfinance as yf
 # =========================
 # Page
 # =========================
-st.set_page_config(page_title="投信鎖碼股 V5.5", layout="wide")
-st.title("投信鎖碼股 V5.5（最終防炸穩定版）")
+st.set_page_config(page_title="投信鎖碼股 V5.6", layout="wide")
+st.title("投信鎖碼股 V5.6（穩定防炸修正版）")
 
 # =========================
 # TWSE抓資料
@@ -17,16 +17,23 @@ st.title("投信鎖碼股 V5.5（最終防炸穩定版）")
 @st.cache_data(ttl=3600)
 def get_day_data(date_str):
     url = f"https://www.twse.com.tw/rwd/zh/fund/TWT44U?date={date_str}&response=json"
+
     try:
         r = requests.get(url, timeout=10)
         data = r.json()
+
+        # 🔥 防炸：TWSE狀態檢查
+        if data.get("stat") != "OK":
+            return pd.DataFrame()
 
         if "data" not in data or "fields" not in data:
             return pd.DataFrame()
 
         return pd.DataFrame(data["data"], columns=data["fields"])
+
     except:
         return pd.DataFrame()
+
 
 def to_number(x):
     try:
@@ -34,33 +41,36 @@ def to_number(x):
     except:
         return 0
 
+
 @st.cache_data(ttl=3600)
 def load_data(days=60):
     all_data = []
     today = datetime.today()
 
-    for i in range(days):
+    checked = 0
+    i = 0
+
+    # 🔥 改成抓「有效交易日」
+    while checked < days and i < 120:
         d = today - timedelta(days=i)
+        i += 1
+
         df = get_day_data(d.strftime("%Y%m%d"))
 
         if df is not None and not df.empty:
             all_data.append(df)
+            checked += 1
 
-        time.sleep(0.02)
+        time.sleep(0.03)
 
     if not all_data:
         return pd.DataFrame()
 
-    out = pd.concat(all_data, ignore_index=True)
+    return pd.concat(all_data, ignore_index=True)
 
-    # 防炸：補日期
-    if "日期" not in out.columns:
-        out["日期"] = datetime.today().strftime("%Y%m%d")
-
-    return out
 
 # =========================
-# 欄位安全偵測
+# 欄位偵測
 # =========================
 def find_col(df, keywords):
     if df is None or df.empty:
@@ -72,6 +82,7 @@ def find_col(df, keywords):
                 return c
     return None
 
+
 # =========================
 # ETF判斷
 # =========================
@@ -81,8 +92,9 @@ def is_etf(code):
     except:
         return False
 
+
 # =========================
-# 股價（完全容錯）
+# 股價（yfinance）
 # =========================
 @st.cache_data(ttl=86400)
 def get_price(stock):
@@ -120,21 +132,25 @@ def get_price(stock):
     except:
         return None
 
+
 # =========================
 # UI
 # =========================
 days = st.slider("回溯天數", 40, 100, 60)
 
-if st.button("開始 V5.5 防炸篩選"):
+if st.button("開始 V5.6 防炸篩選"):
 
     df = load_data(days)
 
+    # 🔥 debug（很重要）
+    st.write("資料筆數:", df.shape)
+
     if df is None or df.empty:
-        st.error("TWSE 無資料（API可能異常）")
+        st.error("TWSE 無資料（API失敗或假日區間）")
         st.stop()
 
     # =========================
-    # 欄位偵測（防炸核心）
+    # 欄位偵測
     # =========================
     stock_col = find_col(df, ["證券代號", "證券代碼", "代號"])
     buy_col = find_col(df, ["買賣超", "買超", "賣超"])
@@ -155,7 +171,7 @@ if st.button("開始 V5.5 防炸篩選"):
     result = []
 
     # =========================
-    # 主迴圈（完全防炸）
+    # 主迴圈
     # =========================
     for stock, g in df.groupby(stock_col):
 
@@ -171,7 +187,7 @@ if st.button("開始 V5.5 防炸篩選"):
 
             last3 = g.tail(3)["買超張數"].sum() if len(g) >= 3 else 0
             last10 = g.tail(10)["買超張數"].sum() if len(g) >= 10 else 0
-            buy20 = g.tail(20)["買超張數"].sum() if len(g) >= 1 else 0
+            buy20 = g.tail(20)["買超張數"].sum()
 
             inst_strength = (last3 / 3) - (last10 / 10)
 
@@ -207,24 +223,24 @@ if st.button("開始 V5.5 防炸篩選"):
                 "分數": score
             })
 
-        except Exception:
+        except:
             continue
 
     rank_df = pd.DataFrame(result)
 
     if rank_df.empty:
-        st.error("沒有結果（請放寬回溯天數或市場條件）")
+        st.error("沒有結果（可能條件太嚴或資料不足）")
         st.stop()
 
     rank_df = rank_df.sort_values("分數", ascending=False)
 
-    st.success(f"V5.5 完成：{len(rank_df)} 檔（穩定版）")
+    st.success(f"完成：{len(rank_df)} 檔")
 
     st.dataframe(rank_df, use_container_width=True)
 
     st.download_button(
         "下載CSV",
         rank_df.to_csv(index=False).encode("utf-8-sig"),
-        "v55_final.csv",
+        "v56.csv",
         "text/csv"
     )
