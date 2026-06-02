@@ -9,11 +9,11 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("投信鎖碼股排行（免費版）")
+st.title("投信鎖碼股排行（免費版 V2）")
 
-# -----------------------
-# API
-# -----------------------
+# =========================
+# 下載單日資料
+# =========================
 
 @st.cache_data(ttl=3600)
 def get_day_data(date_str):
@@ -27,7 +27,10 @@ def get_day_data(date_str):
 
         r = requests.get(
             url,
-            timeout=10
+            timeout=10,
+            headers={
+                "User-Agent": "Mozilla/5.0"
+            }
         )
 
         data = r.json()
@@ -48,35 +51,36 @@ def get_day_data(date_str):
         return pd.DataFrame()
 
 
-# -----------------------
+# =========================
 # 數字轉換
-# -----------------------
+# =========================
 
 def to_number(x):
 
     try:
+
         return int(
             str(x)
             .replace(",", "")
             .replace("+", "")
+            .replace(" ", "")
         )
 
     except:
+
         return 0
 
 
-# -----------------------
-# 抓最近交易資料
-# -----------------------
+# =========================
+# 下載歷史資料
+# =========================
 
 @st.cache_data(ttl=3600)
-def load_data(days=30):
+def load_data(days):
 
-    data_list = []
+    all_data = []
 
     today = datetime.today()
-
-    progress = st.progress(0)
 
     for i in range(days):
 
@@ -87,26 +91,22 @@ def load_data(days=30):
         df = get_day_data(date_str)
 
         if not df.empty:
-            data_list.append(df)
-
-        progress.progress((i + 1) / days)
+            all_data.append(df)
 
         time.sleep(0.05)
 
-    progress.empty()
-
-    if len(data_list) == 0:
+    if len(all_data) == 0:
         return pd.DataFrame()
 
     return pd.concat(
-        data_list,
+        all_data,
         ignore_index=True
     )
 
 
-# -----------------------
-# 天數選擇
-# -----------------------
+# =========================
+# UI
+# =========================
 
 days = st.slider(
     "回溯天數",
@@ -114,6 +114,22 @@ days = st.slider(
     90,
     60
 )
+
+min_streak = st.slider(
+    "最低連買天數",
+    1,
+    20,
+    5
+)
+
+min_buy20 = st.number_input(
+    "近20日最低買超張數",
+    value=1000
+)
+
+# =========================
+# 執行
+# =========================
 
 if st.button("開始篩選"):
 
@@ -123,13 +139,12 @@ if st.button("開始篩選"):
 
     if df.empty:
 
-        st.error("無法取得資料")
+        st.error("抓不到資料")
 
         st.stop()
 
     stock_col = "證券代號"
 
-    # 找投信買賣超欄位
     buy_col = None
 
     for c in df.columns:
@@ -147,6 +162,7 @@ if st.button("開始篩選"):
 
     df[buy_col] = df[buy_col].apply(to_number)
 
+    # 股 -> 張
     df["買超張數"] = df[buy_col] / 1000
 
     df["日期"] = pd.to_datetime(df["日期"])
@@ -168,45 +184,49 @@ if st.button("開始篩選"):
             else:
                 break
 
-        recent20 = g.tail(20)
+        buy20 = g.tail(20)["買超張數"].sum()
 
-        recent60 = g.tail(60)
+        buy60 = g.tail(60)["買超張數"].sum()
 
         score = (
-            streak * 5
-            + recent20["買超張數"].sum() * 0.02
-            + recent60["買超張數"].sum() * 0.01
+            streak * 10
+            + buy20 * 0.02
+            + buy60 * 0.01
         )
 
         result.append({
             "股票代號": stock,
             "投信連買天數": streak,
-            "近20日買超": round(
-                recent20["買超張數"].sum(),
-                0
-            ),
-            "近60日買超": round(
-                recent60["買超張數"].sum(),
-                0
-            ),
-            "鎖碼分數": round(
-                score,
-                2
-            )
+            "近20日買超張數": round(buy20),
+            "近60日買超張數": round(buy60),
+            "鎖碼分數": round(score, 2)
         })
 
     rank_df = pd.DataFrame(result)
 
+    # =========================
+    # 篩選
+    # =========================
+
+    rank_df = rank_df[
+        (rank_df["投信連買天數"] >= min_streak)
+        &
+        (rank_df["近20日買超張數"] >= min_buy20)
+    ]
+
     rank_df = rank_df.sort_values(
-        "鎖碼分數",
+        ["鎖碼分數"],
         ascending=False
     )
 
-    st.subheader("Top 50")
+    st.success(
+        f"找到 {len(rank_df)} 檔符合條件"
+    )
 
     st.dataframe(
-        rank_df.head(50),
-        use_container_width=True
+        rank_df,
+        use_container_width=True,
+        hide_index=True
     )
 
     csv = rank_df.to_csv(
@@ -214,8 +234,8 @@ if st.button("開始篩選"):
     ).encode("utf-8-sig")
 
     st.download_button(
-        "下載CSV",
-        csv,
-        "投信鎖碼排行.csv",
-        "text/csv"
+        label="下載CSV",
+        data=csv,
+        file_name="投信鎖碼排行.csv",
+        mime="text/csv"
     )
