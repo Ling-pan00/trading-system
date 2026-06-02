@@ -5,11 +5,8 @@ import time
 from datetime import datetime, timedelta
 import yfinance as yf
 
-# =========================
-# Page
-# =========================
-st.set_page_config(page_title="投信鎖碼股 V5.3", layout="wide")
-st.title("投信鎖碼股 V5.3（穩定工程版）")
+st.set_page_config(page_title="投信鎖碼股 V5.4", layout="wide")
+st.title("投信鎖碼股 V5.4（穩定可跑版）")
 
 # =========================
 # TWSE
@@ -25,7 +22,6 @@ def get_day_data(date_str):
             return pd.DataFrame()
 
         return pd.DataFrame(data["data"], columns=data["fields"])
-
     except:
         return pd.DataFrame()
 
@@ -55,14 +51,23 @@ def load_data(days=60):
     return pd.concat(all_data, ignore_index=True)
 
 # =========================
-# ETF判斷
+# 安全找欄位
 # =========================
-def is_etf(code):
-    code = str(code)
-    return code.startswith("00")
+def find_col(df, keywords):
+    for c in df.columns:
+        for k in keywords:
+            if k in str(c):
+                return c
+    return None
 
 # =========================
-# 股價（失敗不淘汰）
+# ETF剔除
+# =========================
+def is_etf(code):
+    return str(code).startswith("00")
+
+# =========================
+# 股價（安全版）
 # =========================
 @st.cache_data(ttl=86400)
 def get_price(stock):
@@ -70,30 +75,26 @@ def get_price(stock):
         t = yf.Ticker(f"{stock}.TW")
         hist = t.history(period="6mo")
 
-        if hist is None or hist.empty or len(hist) < 20:
+        if hist is None or hist.empty:
             return None
 
         close = hist["Close"]
         vol = hist["Volume"]
 
+        if len(close) < 20:
+            return None
+
         price = close.iloc[-1]
-
         ma20 = close.rolling(20).mean().iloc[-1]
-        ma60 = close.rolling(60).mean().iloc[-1] if len(close) >= 60 else ma20
 
-        ma20_up = ma20 > close.rolling(20).mean().iloc[-5] if len(close) >= 25 else False
-
-        high20 = close.rolling(20).max().iloc[-2] if len(close) >= 20 else price
-
-        breakout = price > high20
-
+        ma_up = ma20 > close.rolling(20).mean().iloc[-5] if len(close) > 25 else False
+        breakout = price > close.rolling(20).max().iloc[-2] if len(close) >= 20 else False
         vol_break = vol.iloc[-1] > vol.tail(20).mean() * 1.3 if len(vol) >= 20 else False
 
         return {
             "price": price,
             "ma20": ma20,
-            "ma60": ma60,
-            "ma_up": ma20_up,
+            "ma_up": ma_up,
             "breakout": breakout,
             "vol_break": vol_break
         }
@@ -106,7 +107,7 @@ def get_price(stock):
 # =========================
 days = st.slider("回溯天數", 40, 100, 60)
 
-if st.button("開始 V5.3"):
+if st.button("開始篩選"):
 
     df = load_data(days)
 
@@ -114,10 +115,15 @@ if st.button("開始 V5.3"):
         st.error("TWSE 無資料")
         st.stop()
 
-    stock_col = "證券代號"
-    buy_col = [c for c in df.columns if "買賣超" in c][0]
-    name_col = [c for c in df.columns if "證券名稱" in c]
-    name_col = name_col[0] if name_col else None
+    # 🔥 欄位自動偵測（避免 KeyError）
+    stock_col = find_col(df, ["證券代號", "證券代碼"])
+    buy_col = find_col(df, ["買賣超", "買超", "賣超"])
+    name_col = find_col(df, ["證券名稱"])
+
+    if stock_col is None or buy_col is None:
+        st.error("欄位解析失敗")
+        st.write(df.columns)
+        st.stop()
 
     df[buy_col] = df[buy_col].apply(to_number)
     df["買超張數"] = df[buy_col] / 1000
@@ -144,20 +150,15 @@ if st.button("開始 V5.3"):
 
         price_data = get_price(stock)
 
-        # 🔥 沒資料也不淘汰（給0）
         if price_data is None:
             price_data = {
                 "price": 0,
                 "ma20": 0,
-                "ma60": 0,
                 "ma_up": 0,
                 "breakout": 0,
                 "vol_break": 0
             }
 
-        # =========================
-        # 🔥 打分模型（核心）
-        # =========================
         score = (
             inst_strength * 50 +
             buy20 * 0.02 +
@@ -172,11 +173,6 @@ if st.button("開始 V5.3"):
             "投信強度": inst_strength,
             "近20買超": buy20,
             "收盤價": price_data["price"],
-            "MA20": price_data["ma20"],
-            "MA60": price_data["ma60"],
-            "MA20上升": price_data["ma_up"],
-            "突破": price_data["breakout"],
-            "量能突破": price_data["vol_break"],
             "分數": score
         })
 
@@ -188,13 +184,13 @@ if st.button("開始 V5.3"):
 
     rank_df = rank_df.sort_values("分數", ascending=False)
 
-    st.success(f"V5.3 完成：{len(rank_df)} 檔")
+    st.success(f"完成：{len(rank_df)} 檔股票")
 
     st.dataframe(rank_df, use_container_width=True)
 
     st.download_button(
         "下載CSV",
         rank_df.to_csv(index=False).encode("utf-8-sig"),
-        "v53_final.csv",
+        "v54.csv",
         "text/csv"
     )
