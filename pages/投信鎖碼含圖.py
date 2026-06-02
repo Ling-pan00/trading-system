@@ -1,45 +1,90 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
-import yfinance as yf
-import mplfinance as mpf
-import matplotlib.pyplot as plt
 import requests
 from datetime import datetime, timedelta
 import time
+import yfinance as yf
+import mplfinance as mpf
+import matplotlib.pyplot as plt
+import numpy as np
 
-# --- 設定頁面 ---
-st.set_page_config(layout="wide")
-st.title("DEBUG 診斷模式：V9.2")
+# --- 頁面配置 ---
+st.set_page_config(page_title="投信鎖碼股 V9.2", layout="wide")
+st.title("投信鎖碼股 V9.2（整合版）")
 
-# --- 1. 狀態持久化 ---
+# 初始化 session_state
 if 'out_df' not in st.session_state:
     st.session_state.out_df = pd.DataFrame()
 
-# --- 2. 測試用的選股邏輯 ---
-def run_selection():
-    st.write(">> 正在執行 run_selection...")
-    # 這是模擬資料，如果這段跑得動，問題出在您原本的 load() 函數裡
-    time.sleep(1)
-    return pd.DataFrame({'股票': ['1503', '1504', '1513', '1521']})
-
-# --- 3. 測試按鈕 ---
-if st.button("開始 V9.2 (測試版)"):
-    st.write(">> 按鈕已被按下！")
+# =========================
+# 您的選股邏輯函數
+# =========================
+def get_day(date):
+    url = f"https://www.twse.com.tw/rwd/zh/fund/TWT44U?date={date}&response=json"
     try:
-        # 強制執行選股
-        df = run_selection()
-        st.session_state.out_df = df
-        st.write(">> 資料已寫入 session_state")
-        st.rerun() # 強制重跑
-    except Exception as e:
-        st.error(f"執行時崩潰: {e}")
-else:
-    st.write("按鈕等待中...")
+        r = requests.get(url, timeout=10)
+        data = r.json()
+        if data.get("stat") != "OK": return None
+        df = pd.DataFrame(data["data"], columns=data["fields"])
+        df["date"] = date
+        return df
+    except: return None
 
-# --- 4. 顯示結果 ---
+def load(days=30):
+    all_df = []
+    today = datetime.today()
+    for i in range(days * 2):
+        d = (today - timedelta(days=i)).strftime("%Y%m%d")
+        df = get_day(d)
+        if df is not None and not df.empty: all_df.append(df)
+        time.sleep(0.02)
+        if len(all_df) >= days: break
+    return pd.concat(all_df, ignore_index=True) if all_df else pd.DataFrame()
+
+def find(df, keys):
+    for c in df.columns:
+        for k in keys:
+            if k in str(c): return c
+    return None
+
+# =========================
+# 您的繪圖邏輯函數
+# =========================
+def draw_zigzag_chart(ticker_code, stock_name):
+    df_chart = yf.download(ticker_code, period="3mo", progress=False)
+    if df_chart.empty: return
+    # (省略部分細節，與您成功的繪圖邏輯相同)
+    # ... 此處放入您之前那段能畫出轉折圖的完整繪圖代碼 ...
+    st.write(f"正在顯示 {stock_name} 的轉折圖...") 
+    # 這裡放 mplfinance 繪圖 code
+
+# =========================
+# UI 操作區
+# =========================
+if st.button("開始 V9.2"):
+    with st.spinner("正在運算..."):
+        df = load(30)
+        stock_col = find(df, ["證券代號"])
+        buy_col = find(df, ["買賣超"])
+        df[buy_col] = pd.to_numeric(df[buy_col], errors="coerce").fillna(0)
+        
+        result = []
+        for stock, g in df.groupby(stock_col):
+            # ... 放入您的鎖碼邏輯 ...
+            # 簡化範例：
+            result.append({"股票": stock, "強度": 0.5}) 
+            
+        st.session_state.out_df = pd.DataFrame(result).sort_values("強度", ascending=False)
+        st.rerun()
+
+# =========================
+# 結果顯示區
+# =========================
 if not st.session_state.out_df.empty:
-    st.success("成功取得資料！")
-    st.dataframe(st.session_state.out_df)
+    col1, col2 = st.columns([1, 3])
+    with col1:
+        selected = st.selectbox("選股列表:", st.session_state.out_df['股票'].tolist())
+    with col2:
+        draw_zigzag_chart(f"{selected}.TW", selected)
 else:
-    st.warning("目前無資料，請點擊按鈕。")
+    st.info("請按下按鈕開始選股。")
