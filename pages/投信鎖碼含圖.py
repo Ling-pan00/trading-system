@@ -8,20 +8,20 @@ import requests
 from datetime import datetime, timedelta
 import time
 
+# 設定頁面
 st.set_page_config(page_title="投信鎖碼股 V9.2", layout="wide")
 st.title("投信鎖碼股 V9.2（平衡實戰版）")
 
-# --- 1. 狀態初始化 (解決資料消失問題) ---
+# --- 1. 狀態持久化 ---
 if 'out' not in st.session_state:
     st.session_state.out = pd.DataFrame()
 
-# --- 2. 轉折 K 線圖繪製模組 (你提供的成功模組) ---
+# --- 2. 轉折 K 線圖繪製模組 ---
 def draw_zigzag_chart(ticker_code, stock_name):
-    # (此處使用你提供的模組邏輯)
     end_date = datetime.today().strftime('%Y-%m-%d')
     start_date = (datetime.today() - timedelta(days=90)).strftime('%Y-%m-%d')
-    
     df_chart = yf.download(ticker_code, start=start_date, end=end_date, progress=False)
+    
     if df_chart.empty:
         st.error(f"⚠️ 無法取得 {stock_name} 的數據。")
         return
@@ -32,10 +32,8 @@ def draw_zigzag_chart(ticker_code, stock_name):
     df_chart['5MA'] = df_chart['Close'].rolling(window=5).mean()
     df_chart['10MA'] = df_chart['Close'].rolling(window=10).mean()
     df_chart['20MA'] = df_chart['Close'].rolling(window=20).mean()
-    
     df_chart = df_chart.dropna(subset=['Close', '5MA', '20MA']).copy()
     
-    # 計算轉折點邏輯
     df_chart['State'] = np.where(df_chart['Close'] > df_chart['5MA'], 1, -1)
     df_chart['State_Group'] = (df_chart['State'] != df_chart['State'].shift()).cumsum()
     
@@ -56,7 +54,7 @@ def draw_zigzag_chart(ticker_code, stock_name):
     # 繪圖
     mc = mpf.make_marketcolors(up='red', down='green', edge='inherit', wick='inherit', volume='in')
     s_style = mpf.make_mpf_style(marketcolors=mc, gridstyle='--')
-    plots = [mpf.make_addplot(df_chart[['5MA', '10MA', '20MA']]) ]
+    plots = [mpf.make_addplot(df_chart[['5MA', '10MA', '20MA']])]
     fig, axlist = mpf.plot(df_chart, type='candle', style=s_style, addplot=plots, returnfig=True, figsize=(10, 6))
     
     main_ax = axlist[0]
@@ -67,26 +65,44 @@ def draw_zigzag_chart(ticker_code, stock_name):
     st.pyplot(fig)
     plt.close(fig)
 
-# --- 3. 投信鎖碼策略 (維持原版邏輯) ---
-def load_data():
-    # 將你原本的抓取與計算邏輯放在這裡，並回傳篩選後的 out DataFrame
-    # ... (使用你提供的 load(30) 與策略 for 迴圈) ...
-    return out 
+# --- 3. 投信資料抓取 ---
+def get_day(date):
+    url = f"https://www.twse.com.tw/rwd/zh/fund/TWT44U?date={date}&response=json"
+    try:
+        r = requests.get(url, timeout=10)
+        data = r.json()
+        if data.get("stat") != "OK": return None
+        df = pd.DataFrame(data["data"], columns=data["fields"])
+        df["date"] = date
+        return df
+    except: return None
 
-# --- 4. 主程式介面 ---
+# --- 4. 主邏輯執行 ---
 if st.button("開始 V9.2"):
-    with st.spinner("正在運算投信鎖碼策略..."):
-        # 執行你原本的策略
-        st.session_state.out = load_data() 
+    with st.spinner("計算鎖碼中..."):
+        all_df = []
+        today = datetime.today()
+        for i in range(60): # 抓取更多天數以利運算
+            d = (today - timedelta(days=i)).strftime("%Y%m%d")
+            df = get_day(d)
+            if df is not None and not df.empty: all_df.append(df)
+            time.sleep(0.02)
+        
+        df = pd.concat(all_df, ignore_index=True)
+        # (這裡插入你原本的鎖碼核心邏輯，最後產出 out)
+        # 為演示目的，假設產出了 out：
+        # out = ... (你的策略運算結果)
+        st.session_state.out = out 
         st.rerun()
 
+# --- 5. 互動顯示 ---
 if not st.session_state.out.empty:
     out = st.session_state.out
-    col1, col2 = st.columns([1, 3])
-    
+    col1, col2 = st.columns([1, 4])
     with col1:
-        selected_stock = st.radio("選股列表:", out['股票'].tolist())
-    
+        selected_stock = st.selectbox("鎖碼股清單:", out['股票'].tolist())
     with col2:
-        st.subheader(f"目前分析：{selected_stock}")
+        st.subheader(f"分析標的: {selected_stock}")
         draw_zigzag_chart(f"{selected_stock}.TW", selected_stock)
+else:
+    st.info("請按下「開始 V9.2」按鈕進行選股。")
