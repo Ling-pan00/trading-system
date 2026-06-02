@@ -8,13 +8,36 @@ import requests
 import time
 from datetime import datetime, timedelta
 
-# --- 1. 您提供的專業繪圖模組 (完全原樣保留) ---
+# --- 1. 您的篩選核心邏輯 (完全保留) ---
+def get_day(date):
+    url = f"https://www.twse.com.tw/rwd/zh/fund/TWT44U?date={date}&response=json"
+    try:
+        r = requests.get(url, timeout=10)
+        data = r.json()
+        if data.get("stat") != "OK": return None
+        df = pd.DataFrame(data["data"], columns=data["fields"])
+        df["date"] = date
+        return df
+    except: return None
+
+def load(days=30):
+    all_df = []
+    today = datetime.today()
+    for i in range(days * 2):
+        d = (today - timedelta(days=i)).strftime("%Y%m%d")
+        df = get_day(d)
+        if df is not None and not df.empty: all_df.append(df)
+        time.sleep(0.05)
+        if len(all_df) >= days: break
+    return pd.concat(all_df, ignore_index=True) if all_df else pd.DataFrame()
+
+# --- 2. 您的轉折 K 線圖繪製模組 (完全原樣保留) ---
 def draw_zigzag_chart(ticker_code, stock_name):
-    # 這裡自動處理上市櫃後綴
-    ticker = f"{ticker_code}.TW" if int(ticker_code) < 2000 else f"{ticker_code}.TWO"
-    
     end_date = datetime.today().strftime('%Y-%m-%d')
     start_date = (datetime.today() - timedelta(days=90)).strftime('%Y-%m-%d')
+    
+    # 自動處理上市櫃代號 (您原來的邏輯)
+    ticker = f"{ticker_code}.TW" if int(ticker_code) < 2000 else f"{ticker_code}.TWO"
     
     df_chart = yf.download(ticker, start=start_date, end=end_date, progress=False)
     
@@ -90,10 +113,23 @@ def draw_zigzag_chart(ticker_code, stock_name):
     st.pyplot(fig)
     plt.close(fig)
 
-# --- 2. 主程式篩選核心 ---
-# (此處放您原本成功運作的篩選邏輯，確保變數 out 有 '股票' 欄位)
-# if st.button("開始執行"):
-#    ... (篩選邏輯) ...
-#    st.dataframe(out)
-#    sel = st.selectbox("選擇股票:", out['股票'].unique())
-#    if sel: draw_zigzag_chart(sel, sel)
+# --- 3. 完美整合的執行區 ---
+st.set_page_config(page_title="投信鎖碼 Pro", layout="wide")
+if st.button("開始執行"):
+    df = load(30)
+    # 防錯：動態尋找欄位
+    buy_col = [c for c in df.columns if "買賣超" in str(c)][0]
+    stock_col = [c for c in df.columns if "證券代號" in str(c)][0]
+    df[buy_col] = pd.to_numeric(df[buy_col], errors="coerce").fillna(0)
+    
+    # 您的原始篩選邏輯
+    result = []
+    for stock, g in df.groupby(stock_col):
+        series = g.sort_values("date")[buy_col].values
+        if len(series) < 10 or (series[-3:] < 0).sum() >= 2 or series[-10:].sum() <= 0: continue
+        result.append({"股票": stock})
+    out = pd.DataFrame(result)
+    
+    st.dataframe(out)
+    sel = st.selectbox("選擇股票:", out['股票'].unique())
+    if sel: draw_zigzag_chart(sel, sel)
