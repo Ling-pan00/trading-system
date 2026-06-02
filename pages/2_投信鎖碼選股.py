@@ -8,8 +8,8 @@ import yfinance as yf
 # =========================
 # Page
 # =========================
-st.set_page_config(page_title="投信鎖碼股 V7", layout="wide")
-st.title("投信鎖碼股 V7（終極穩定版）")
+st.set_page_config(page_title="投信鎖碼股 V7.1", layout="wide")
+st.title("投信鎖碼股 V7.1（修正欄位崩潰版）")
 
 # =========================
 # TWSE
@@ -43,6 +43,7 @@ def load_data(days=60):
         i += 1
 
         df = get_day_data(d.strftime("%Y%m%d"))
+
         if df is not None and not df.empty:
             all_data.append(df)
             checked += 1
@@ -86,7 +87,6 @@ def get_price(stock):
         ma20 = float(close.rolling(20).mean().iloc[-1])
 
         return {
-            "price": price,
             "ma_up": ma20 > close.rolling(20).mean().iloc[-5],
             "breakout": price > close.rolling(20).max().iloc[-2],
             "vol_up": vol.iloc[-1] > vol.tail(20).mean()
@@ -101,26 +101,33 @@ def get_price(stock):
 # =========================
 days = st.slider("回溯天數", 40, 100, 60)
 
-if st.button("開始 V7 鎖碼篩選"):
+if st.button("開始 V7.1"):
 
     df = load_data(days)
 
-    st.write("原始資料筆數:", df.shape)
+    st.write("原始資料:", df.shape)
 
     if df.empty:
-        st.error("無資料")
+        st.error("TWSE 無資料")
         st.stop()
 
+    # =========================
+    # 🔥 正確抓欄位（修正點）
+    # =========================
     stock_col = find_col(df, ["證券代號", "代號"])
-    buy_col = find_col(df, ["買賣超"])
+    buy_col = find_col(df, ["買賣超", "買賣超股數", "買賣超(股)"])
+
+    if stock_col is None or buy_col is None:
+        st.error("欄位抓不到（TWSE格式變動）")
+        st.write(df.columns)
+        st.stop()
+
+    df = df.dropna(subset=[stock_col])
 
     df[buy_col] = pd.to_numeric(df[buy_col], errors="coerce").fillna(0)
 
     result = []
 
-    # =========================
-    # 計算「相對強度」（核心修正）
-    # =========================
     for stock, g in df.groupby(stock_col):
 
         try:
@@ -129,30 +136,27 @@ if st.button("開始 V7 鎖碼篩選"):
 
             g = g.sort_index()
 
-            last3 = g["買賣超"].tail(3).mean()
-            last10 = g["買賣超"].tail(10).mean()
-            last20 = g["買賣超"].tail(20).mean()
+            last10 = g[buy_col].tail(10).mean()
+            last20 = g[buy_col].tail(20).mean()
 
-            # 🔥 關鍵：相對強度（不再用絕對值）
+            if last20 == 0:
+                continue
+
             strength = last10 / (abs(last20) + 1)
 
             price = get_price(stock)
             if price is None:
                 continue
 
-            score = (
-                strength * 100 +
-                (1 if price["ma_up"] else 0) * 10 +
-                (1 if price["breakout"] else 0) * 15 +
-                (1 if price["vol_up"] else 0) * 10
-            )
+            score = strength * 100
 
             result.append({
                 "股票代號": stock,
                 "強度": strength,
                 "分數": score,
                 "MA多頭": price["ma_up"],
-                "突破": price["breakout"]
+                "突破": price["breakout"],
+                "量增": price["vol_up"]
             })
 
         except:
@@ -161,25 +165,13 @@ if st.button("開始 V7 鎖碼篩選"):
     rank_df = pd.DataFrame(result)
 
     if rank_df.empty:
-        st.error("沒有資料（請放寬天數）")
+        st.error("沒有資料（欄位或資料來源問題）")
         st.stop()
 
-    # =========================
-    # 🔥 改成「排名篩選」而不是硬門檻
-    # =========================
-    rank_df["score_rank"] = rank_df["分數"].rank(pct=True)
+    rank_df = rank_df.sort_values("分數", ascending=False)
 
-    final_df = rank_df[
-        rank_df["score_rank"] > 0.85   # 前15%
-    ].sort_values("分數", ascending=False)
+    final_df = rank_df[rank_df["分數"] > rank_df["分數"].quantile(0.85)]
 
-    st.success(f"鎖碼完成：{len(final_df)} 檔（正常 20~120）")
+    st.success(f"完成：{len(final_df)} 檔")
 
     st.dataframe(final_df, use_container_width=True)
-
-    st.download_button(
-        "下載CSV",
-        final_df.to_csv(index=False).encode("utf-8-sig"),
-        "v7.csv",
-        "text/csv"
-    )
