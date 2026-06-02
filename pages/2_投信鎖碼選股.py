@@ -8,8 +8,8 @@ import yfinance as yf
 # =========================
 # Page
 # =========================
-st.set_page_config(page_title="投信鎖碼股 V5", layout="wide")
-st.title("投信鎖碼股篩選器 V5（法人訊號版）")
+st.set_page_config(page_title="投信鎖碼股 V5.1", layout="wide")
+st.title("投信鎖碼股篩選器 V5.1（穩定打分版）")
 
 # =========================
 # TWSE資料
@@ -81,22 +81,27 @@ def get_price(stock):
             return None
 
         price = close.iloc[-1]
+
         ma20 = close.rolling(20).mean().iloc[-1]
         ma20_prev = close.rolling(20).mean().iloc[-5]
 
         ma20_up = ma20 > ma20_prev
 
         high20 = close.rolling(20).max().iloc[-2]
+
         breakout = price > high20
 
         vol_break = vol.iloc[-1] > vol.tail(20).mean() * 1.5
 
-        fake_break = (vol.iloc[-1] > vol.tail(10).mean() * 2.5) and ((price / close.iloc[-2] - 1) > 0.05)
+        fake_break = (
+            vol.iloc[-1] > vol.tail(10).mean() * 2.5
+            and (price / close.iloc[-2] - 1) > 0.05
+        )
 
         return {
-            "收盤價": round(price, 2),
-            "MA20": round(ma20, 2),
-            "MA60": round(close.rolling(60).mean().iloc[-1], 2),
+            "收盤價": price,
+            "MA20": ma20,
+            "MA60": close.rolling(60).mean().iloc[-1],
             "MA20上升": ma20_up,
             "突破": breakout and vol_break,
             "假突破": fake_break
@@ -111,7 +116,7 @@ def get_price(stock):
 days = st.slider("回溯天數", 40, 100, 60)
 min_keep = st.slider("最少保留檔數", 5, 50, 20)
 
-if st.button("開始 V5 篩選"):
+if st.button("開始 V5.1 篩選"):
 
     df = load_data(days)
 
@@ -131,15 +136,23 @@ if st.button("開始 V5 篩選"):
 
     name_map = {}
     if name_col:
-        name_map = df[[stock_col, name_col]].drop_duplicates().set_index(stock_col)[name_col].to_dict()
+        name_map = (
+            df[[stock_col, name_col]]
+            .drop_duplicates()
+            .set_index(stock_col)[name_col]
+            .to_dict()
+        )
 
     result = []
 
+    # =========================
+    # 核心計算（打分模型）
+    # =========================
     for stock, g in df.groupby(stock_col):
 
         g = g.sort_values("日期")
 
-        # ===== 投信加權 =====
+        # 投信強度（3天 vs 10天）
         last10 = g.tail(10)["買超張數"].sum()
         last3 = g.tail(3)["買超張數"].sum()
 
@@ -147,30 +160,33 @@ if st.button("開始 V5 篩選"):
 
         buy20 = g.tail(20)["買超張數"].sum()
 
-        # ===== 股價資料 =====
         price_data = get_price(stock)
 
         if price_data is None:
             continue
 
         if price_data["假突破"]:
-            continue
+            fake_penalty = -50
+        else:
+            fake_penalty = 0
 
-        # ===== 條件 =====
-        if price_data["收盤價"] <= price_data["MA20"]:
-            continue
+        breakout_score = 1 if price_data["突破"] else 0
+        ma_up_score = 1 if price_data["MA20上升"] else 0
 
-        # ===== 起漲條件 =====
-        if not price_data["突破"] and inst_strength < 0:
-            continue
-
-        # ===== 分數 =====
+        # =========================
+        # 🔥 打分（核心）
+        # =========================
         score = (
             inst_strength * 40 +
             buy20 * 0.02 +
-            (1 if price_data["突破"] else 0) * 50 +
-            (1 if price_data["MA20上升"] else 0) * 20
+            breakout_score * 50 +
+            ma_up_score * 20 +
+            fake_penalty
         )
+
+        # 只排除極弱
+        if price_data["收盤價"] <= price_data["MA20"]:
+            continue
 
         result.append({
             "股票代號": stock,
@@ -180,25 +196,25 @@ if st.button("開始 V5 篩選"):
             "收盤價": price_data["收盤價"],
             "MA20": price_data["MA20"],
             "MA60": price_data["MA60"],
-            "突破": price_data["突破"],
-            "MA20上升": price_data["MA20上升"],
+            "突破": breakout_score,
+            "MA20上升": ma_up_score,
             "分數": score
         })
 
     rank_df = pd.DataFrame(result)
 
     if rank_df.empty:
-        st.error("沒有符合條件股票（請放寬條件）")
+        st.error("沒有結果（請再放寬回溯天數或市場條件）")
         st.stop()
 
     rank_df = rank_df.sort_values("分數", ascending=False)
 
-    # ===== 防空機制 =====
+    # 防呆保底
     if len(rank_df) < min_keep:
-        st.warning("結果太少，自動放寬條件")
-        rank_df = rank_df.sort_values("分數", ascending=False).head(min_keep)
+        st.warning("結果太少 → 自動補足")
+        rank_df = rank_df.head(min_keep)
 
-    st.success(f"V5結果：{len(rank_df)} 檔")
+    st.success(f"V5.1 結果：{len(rank_df)} 檔")
 
     st.dataframe(rank_df, use_container_width=True)
 
@@ -207,6 +223,6 @@ if st.button("開始 V5 篩選"):
     st.download_button(
         "下載CSV",
         csv,
-        "投信鎖碼V5.csv",
+        "投信鎖碼V5_1.csv",
         "text/csv"
     )
