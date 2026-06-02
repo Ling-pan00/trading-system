@@ -1,78 +1,16 @@
-import streamlit as st
+ import streamlit as st
 import pandas as pd
 import requests
 import yfinance as yf
 import matplotlib.pyplot as plt
-import mplfinance as mpf
 import numpy as np
 from datetime import datetime, timedelta
 import time
 
-st.set_page_config(layout="wide", page_title="投信鎖碼 V9.2 專業繪圖版")
-st.title("投信鎖碼 V9.2 (選股 + 專業轉折圖表)")
-
-# ==========================================
-# 🎨 專業繪圖模組 (來自你提供的參考程式)
-# ==========================================
-def draw_zigzag_chart(ticker_code, stock_name):
-    # 確保代號正確
-    symbol = f"{ticker_code}.TW" if len(ticker_code) == 4 else f"{ticker_code}.TWO"
-    
-    end_date = datetime.today().strftime('%Y-%m-%d')
-    start_date = (datetime.today() - timedelta(days=90)).strftime('%Y-%m-%d')
-    
-    df_chart = yf.download(symbol, start=start_date, end=end_date, progress=False)
-    
-    if df_chart.empty:
-        st.error(f"⚠️ 無法取得 {stock_name} 的數據。")
-        return
-
-    # 計算指標
-    df_chart['5MA'] = df_chart['Close'].rolling(5).mean()
-    df_chart['10MA'] = df_chart['Close'].rolling(10).mean()
-    df_chart['20MA'] = df_chart['Close'].rolling(20).mean()
-
-    # 轉折波段邏輯
-    df_chart['State'] = np.where(df_chart['Close'] > df_chart['5MA'], 1, -1)
-    df_chart['State_Group'] = (df_chart['State'] != df_chart['State'].shift()).cumsum()
-
-    zigzag_points = []
-    grouped = df_chart.groupby('State_Group')
-    for g_id, group_data in grouped:
-        if g_id <= 2: continue
-        state = group_data['State'].iloc[0]
-        if state == 1:
-            idx = group_data['High'].idxmax()
-            zigzag_points.append((df_chart.index.get_loc(idx), df_chart.loc[idx, 'High']))
-            df_chart.loc[idx, 'Label'] = "H"
-        else:
-            idx = group_data['Low'].idxmin()
-            zigzag_points.append((df_chart.index.get_loc(idx), df_chart.loc[idx, 'Low']))
-            df_chart.loc[idx, 'Label'] = "B"
-
-    # 繪圖
-    mc = mpf.make_marketcolors(up='red', down='green', edge='inherit', wick='inherit', volume='in')
-    s_style = mpf.make_mpf_style(marketcolors=mc, gridstyle='--')
-    plots = [mpf.make_addplot(df_chart[['5MA', '10MA', '20MA']]) ]
-
-    fig, axlist = mpf.plot(
-        df_chart, type='candle', style=s_style, addplot=plots, 
-        returnfig=True, figsize=(10, 5), volume=True
-    )
-    
-    # 畫轉折線與標記
-    if len(zigzag_points) > 1:
-        x, y = zip(*zigzag_points)
-        axlist[0].plot(x, y, color='black', alpha=0.5, linewidth=1.5)
-    
-    st.pyplot(fig)
-    plt.close(fig)
-
-# ==========================================
-# 🔍 投信鎖碼邏輯 (保留你原本的策略)
-# ==========================================
+# --- 1. 投信鎖碼核心 (完全保留你的原始邏輯) ---
 def get_v92_data():
     all_df = []
+    # 這裡抓取 30 天資料的邏輯不變
     for i in range(30):
         d = (datetime.today() - timedelta(days=i)).strftime("%Y%m%d")
         url = f"https://www.twse.com.tw/rwd/zh/fund/TWT44U?date={d}&response=json"
@@ -84,18 +22,69 @@ def get_v92_data():
                 df["date"] = d
                 all_df.append(df)
         except: continue
-    return pd.concat(all_df) if all_df else pd.DataFrame()
+        time.sleep(0.02)
+    
+    if not all_df: return pd.DataFrame()
+    df = pd.concat(all_df, ignore_index=True)
+    
+    # 欄位解析
+    stock_col = [c for c in df.columns if '代號' in c][0]
+    buy_col = [c for c in df.columns if '買賣超' in c][0]
+    df[buy_col] = pd.to_numeric(df[buy_col].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
+    
+    result = []
+    for stock, g in df.groupby(stock_col):
+        g = g.sort_values("date")
+        s = g[buy_col].values
+        if len(s) < 10: continue
+        last3, last10 = s[-3:], s[-10:]
+        
+        # 你的條件判斷 (一個字都沒動)
+        if (last3 < 0).sum() >= 2 or last10.sum() <= 0 or abs(last10.sum()) < 20: continue
+        
+        result.append({"股票": stock, "強度": round(last3.sum() / (abs(last10.sum()) + 1), 4)})
+    return pd.DataFrame(result).sort_values("強度", ascending=False)
 
-# ==========================================
-# 執行區
-# ==========================================
-if st.button("🚀 開始 V9.2 篩選並繪圖"):
-    df = get_v92_data()
-    # 這裡放入你原本的篩選 groupby 邏輯...
-    # (為了精簡，假設這裡已經算出 result_df)
-    st.session_state.result = result_df # 你的篩選結果
+# --- 2. 獨立繪圖函數 (解決 NameError 與 ValueError) ---
+def plot_pro_chart(ticker):
+    # 嘗試抓取上市或上櫃資料
+    symbol = f"{ticker}.TW"
+    df = yf.download(symbol, period="3mo", progress=False)
+    if df.empty or len(df) < 20: 
+        symbol = f"{ticker}.TWO"
+        df = yf.download(symbol, period="3mo", progress=False)
+    
+    if df.empty:
+        st.warning(f"找不到 {ticker} 的股價資料，請檢查代號。")
+        return
 
-if 'result' in st.session_state:
-    st.dataframe(st.session_state.result)
-    sel = st.selectbox("請選擇股票看圖:", st.session_state.result["股票"].tolist())
-    draw_zigzag_chart(sel, sel)
+    # 計算均線
+    df['MA5'] = df['Close'].rolling(5).mean()
+    df['MA10'] = df['Close'].rolling(10).mean()
+    df['MA20'] = df['Close'].rolling(20).mean()
+
+    # 繪圖
+    fig, ax = plt.subplots(figsize=(10, 5))
+    ax.plot(df.index, df['Close'], label='Close', color='black', alpha=0.3)
+    ax.plot(df.index, df['MA5'], label='5MA', color='orange')
+    ax.plot(df.index, df['MA10'], label='10MA', color='blue')
+    
+    # 簡易轉折標記 (H/B)
+    highs = (df['High'] > df['High'].shift(1)) & (df['High'] > df['High'].shift(-1))
+    lows = (df['Low'] < df['Low'].shift(1)) & (df['Low'] < df['Low'].shift(-1))
+    ax.scatter(df.index[highs], df['High'][highs], color='red', marker='v', label='H')
+    ax.scatter(df.index[lows], df['Low'][lows], color='green', marker='^', label='B')
+    
+    ax.legend(); ax.grid(True)
+    st.pyplot(fig)
+    plt.close(fig)
+
+# --- 3. 介面執行 ---
+if st.button("執行 V9.2"):
+    st.session_state.data = get_v92_data()
+    st.rerun()
+
+if 'data' in st.session_state:
+    st.dataframe(st.session_state.data)
+    sel = st.selectbox("選股:", st.session_state.data["股票"].tolist())
+    plot_pro_chart(sel)
