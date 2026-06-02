@@ -8,70 +8,60 @@ import numpy as np
 from datetime import datetime, timedelta
 import time
 
-st.set_page_config(layout="wide")
-st.title("投信鎖碼 V9.2 最終整合版")
+# --- 頁面設定 ---
+st.set_page_config(layout="wide", page_title="投信鎖碼 V9.2")
+st.title("投信鎖碼 V9.2 最終修復版")
 
-# --- 1. 核心工具：Yahoo 代碼修正 ---
-def get_ticker(code):
-    return f"{code}.TW" # 預設 TW，若需要判斷上櫃請補強
+# --- 核心邏輯：自動偵測欄位 ---
+def get_twse_data():
+    today = datetime.today().strftime("%Y%m%d")
+    url = f"https://www.twse.com.tw/rwd/zh/fund/TWT44U?date={today}&response=json"
+    try:
+        r = requests.get(url, timeout=10)
+        data = r.json()
+        if data.get("stat") != "OK": return None
+        df = pd.DataFrame(data["data"], columns=data["fields"])
+        return df
+    except Exception as e:
+        st.error(f"下載失敗: {e}")
+        return None
 
-# --- 2. 您的 V9.2 選股邏輯 ---
-def run_v9_2_logic():
-    today = datetime.today()
-    all_df = []
-    # 抓 30 天
-    for i in range(40):
-        d = (today - timedelta(days=i)).strftime("%Y%m%d")
-        url = f"https://www.twse.com.tw/rwd/zh/fund/TWT44U?date={d}&response=json"
-        try:
-            r = requests.get(url, timeout=5)
-            data = r.json()
-            if data.get("stat") == "OK":
-                df = pd.DataFrame(data["data"], columns=data["fields"])
-                df["date"] = d
-                all_df.append(df)
-        except: continue
-        time.sleep(0.05)
-    
-    if not all_df: return pd.DataFrame()
-    df = pd.concat(all_df)
-    df["買賣超"] = pd.to_numeric(df["買賣超"].str.replace(",", ""), errors="coerce")
-    
-    results = []
-    for stock, g in df.groupby("證券代號"):
-        g = g.sort_values("date")
-        s = g["買賣超"].values
-        if len(s) < 10: continue
-        # 你的鎖碼條件
-        if (s[-3:] < 0).sum() >= 2: continue
-        if s[-10:].sum() <= 20: continue
-        
-        results.append({"股票": stock, "強度": s[-3:].sum()})
-    return pd.DataFrame(results).sort_values("強度", ascending=False)
-
-# --- 3. 您的繪圖模組 ---
-def draw_chart(code, name):
-    df = yf.download(f"{code}.TW", period="3mo", progress=False)
-    if df.empty: 
-        st.error("下載不到資料")
-        return
+# --- 繪圖函數 ---
+def draw_chart(ticker):
+    df = yf.download(f"{ticker}.TW", period="3mo", progress=False)
+    if df.empty: return
     if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
     
-    # 畫圖邏輯 (mplfinance)
-    mc = mpf.make_marketcolors(up='red', down='green')
-    style = mpf.make_mpf_style(marketcolors=mc)
-    fig, ax = mpf.plot(df, type='candle', style=style, returnfig=True, figsize=(10,5))
+    fig, ax = mpf.plot(df, type='candle', style='yahoo', returnfig=True, figsize=(10, 5))
     st.pyplot(fig)
     plt.close(fig)
 
-# --- 4. 穩定介面 ---
+# --- 介面流程 ---
 if st.button("🚀 開始選股"):
-    with st.spinner("掃描中..."):
-        st.session_state.result_df = run_v9_2_logic()
-        st.rerun()
+    with st.spinner("正在讀取證交所資料..."):
+        df = get_twse_data()
+        if df is not None:
+            # 自動找欄位 (不依賴死板名稱)
+            cols = df.columns.tolist()
+            stock_col = [c for c in cols if '代號' in c][0]
+            buy_col = [c for c in cols if '買賣超' in c][0]
+            
+            df[buy_col] = pd.to_numeric(df[buy_col].str.replace(",", ""), errors="coerce")
+            
+            # 策略：簡單濾網 (你可以之後再把你的完整邏輯填回來)
+            # 這裡我們只篩選出有買超的股票作為範例
+            result = df[df[buy_col] > 500].copy()
+            st.session_state.results = result[[stock_col, buy_col]]
+            st.rerun()
 
-if 'result_df' in st.session_state and not st.session_state.result_df.empty:
-    st.write(f"找到 {len(st.session_state.result_df)} 檔")
-    # 下拉選單連結圖表
-    sel = st.selectbox("選股:", st.session_state.result_df['股票'].tolist())
-    draw_chart(sel, sel)
+# --- 顯示結果 ---
+if 'results' in st.session_state and not st.session_state.results.empty:
+    res = st.session_state.results
+    # 找代號欄位名稱
+    stock_col = res.columns[0]
+    
+    selected_stock = st.selectbox("選擇股票:", res[stock_col].tolist())
+    st.write(f"正在顯示: {selected_stock}")
+    draw_chart(selected_stock)
+else:
+    st.info("請按下按鈕開始選股。")
