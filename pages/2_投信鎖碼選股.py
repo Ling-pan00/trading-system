@@ -2,17 +2,18 @@ import streamlit as st
 import pandas as pd
 import requests
 import time
+import re
 from datetime import datetime, timedelta
 import yfinance as yf
 
 # =========================
 # Page
 # =========================
-st.set_page_config(page_title="投信鎖碼股 V5.6", layout="wide")
-st.title("投信鎖碼股 V5.6（穩定防炸修正版）")
+st.set_page_config(page_title="投信鎖碼股 V5.7", layout="wide")
+st.title("投信鎖碼股 V5.7（保證有輸出版）")
 
 # =========================
-# TWSE抓資料
+# TWSE 抓資料
 # =========================
 @st.cache_data(ttl=3600)
 def get_day_data(date_str):
@@ -22,7 +23,6 @@ def get_day_data(date_str):
         r = requests.get(url, timeout=10)
         data = r.json()
 
-        # 🔥 防炸：TWSE狀態檢查
         if data.get("stat") != "OK":
             return pd.DataFrame()
 
@@ -37,7 +37,11 @@ def get_day_data(date_str):
 
 def to_number(x):
     try:
-        return int(str(x).replace(",", "").replace("+", "").strip())
+        s = str(x)
+        s = re.sub(r"[^\d\-]", "", s)
+        if s in ["", "-"]:
+            return 0
+        return int(s)
     except:
         return 0
 
@@ -50,7 +54,6 @@ def load_data(days=60):
     checked = 0
     i = 0
 
-    # 🔥 改成抓「有效交易日」
     while checked < days and i < 120:
         d = today - timedelta(days=i)
         i += 1
@@ -70,7 +73,7 @@ def load_data(days=60):
 
 
 # =========================
-# 欄位偵測
+# 欄位偵測（加強版）
 # =========================
 def find_col(df, keywords):
     if df is None or df.empty:
@@ -84,7 +87,7 @@ def find_col(df, keywords):
 
 
 # =========================
-# ETF判斷
+# ETF
 # =========================
 def is_etf(code):
     try:
@@ -94,7 +97,7 @@ def is_etf(code):
 
 
 # =========================
-# 股價（yfinance）
+# 股價
 # =========================
 @st.cache_data(ttl=86400)
 def get_price(stock):
@@ -138,28 +141,35 @@ def get_price(stock):
 # =========================
 days = st.slider("回溯天數", 40, 100, 60)
 
-if st.button("開始 V5.6 防炸篩選"):
+if st.button("開始 V5.7 篩選"):
 
     df = load_data(days)
 
-    # 🔥 debug（很重要）
-    st.write("資料筆數:", df.shape)
+    st.write("📊 原始資料筆數:", df.shape)
 
     if df is None or df.empty:
-        st.error("TWSE 無資料（API失敗或假日區間）")
+        st.error("TWSE 無資料")
         st.stop()
 
     # =========================
-    # 欄位偵測
+    # 欄位抓取
     # =========================
-    stock_col = find_col(df, ["證券代號", "證券代碼", "代號"])
+    stock_col = find_col(df, ["證券代號", "代號"])
     buy_col = find_col(df, ["買賣超", "買超", "賣超"])
     name_col = find_col(df, ["證券名稱", "名稱"])
 
+    st.write("stock_col:", stock_col)
+    st.write("buy_col:", buy_col)
+
     if stock_col is None or buy_col is None:
-        st.error("欄位解析失敗（TWSE格式變動）")
+        st.error("欄位解析失敗")
         st.write(df.columns)
         st.stop()
+
+    # =========================
+    # 清理資料
+    # =========================
+    df = df.dropna(subset=[stock_col])
 
     df[buy_col] = df[buy_col].apply(to_number)
     df["買超張數"] = df[buy_col] / 1000
@@ -179,7 +189,7 @@ if st.button("開始 V5.6 防炸篩選"):
             if is_etf(stock):
                 continue
 
-            if g is None or g.empty:
+            if g.empty:
                 continue
 
             if "日期" in g.columns:
@@ -197,14 +207,15 @@ if st.button("開始 V5.6 防炸篩選"):
                 price_data = {
                     "price": 0,
                     "ma20": 0,
-                    "ma_up": 0,
-                    "breakout": 0,
-                    "vol_break": 0
+                    "ma_up": False,
+                    "breakout": False,
+                    "vol_break": False
                 }
 
+            # 🔥 分數放大（關鍵修正）
             score = (
-                inst_strength * 50 +
-                buy20 * 0.02 +
+                inst_strength * 300 +
+                buy20 * 0.05 +
                 (1 if price_data["ma_up"] else 0) * 10 +
                 (1 if price_data["breakout"] else 0) * 20 +
                 (1 if price_data["vol_break"] else 0) * 10
@@ -214,7 +225,7 @@ if st.button("開始 V5.6 防炸篩選"):
                 "股票代號": stock,
                 "股票名稱": name_map.get(stock, ""),
                 "投信強度": inst_strength,
-                "近20買超": buy20,
+                "近20買超(千股)": buy20,
                 "收盤價": price_data["price"],
                 "MA20": price_data["ma20"],
                 "MA20上升": price_data["ma_up"],
@@ -229,18 +240,18 @@ if st.button("開始 V5.6 防炸篩選"):
     rank_df = pd.DataFrame(result)
 
     if rank_df.empty:
-        st.error("沒有結果（可能條件太嚴或資料不足）")
+        st.error("沒有結果（條件太嚴或資料不足）")
         st.stop()
 
     rank_df = rank_df.sort_values("分數", ascending=False)
 
-    st.success(f"完成：{len(rank_df)} 檔")
+    st.success(f"完成：{len(rank_df)} 檔股票")
 
     st.dataframe(rank_df, use_container_width=True)
 
     st.download_button(
         "下載CSV",
         rank_df.to_csv(index=False).encode("utf-8-sig"),
-        "v56.csv",
+        "v57.csv",
         "text/csv"
     )
