@@ -9,11 +9,11 @@ import yfinance as yf
 # =========================
 # Page
 # =========================
-st.set_page_config(page_title="投信鎖碼股 V6", layout="wide")
-st.title("投信鎖碼股 V6（真正鎖碼收斂版）")
+st.set_page_config(page_title="投信鎖碼股 V6.1", layout="wide")
+st.title("投信鎖碼股 V6.1（穩定可出結果版）")
 
 # =========================
-# TWSE
+# TWSE API
 # =========================
 @st.cache_data(ttl=3600)
 def get_day_data(date_str):
@@ -46,7 +46,7 @@ def to_number(x):
 
 
 @st.cache_data(ttl=3600)
-def load_data(days=80):
+def load_data(days=60):
     all_data = []
     today = datetime.today()
 
@@ -108,7 +108,9 @@ def get_price(stock):
 
         breakout = price > float(close.rolling(20).max().iloc[-2])
 
-        vol_break = vol.iloc[-1] > vol.tail(20).mean() * 1.3
+        vol_break = False
+        if len(vol) >= 20:
+            vol_break = vol.iloc[-1] > vol.tail(20).mean() * 1.3
 
         return {
             "price": price,
@@ -127,7 +129,7 @@ def get_price(stock):
 # =========================
 days = st.slider("回溯天數", 40, 100, 60)
 
-if st.button("開始 V6 鎖碼篩選"):
+if st.button("開始 V6.1 鎖碼篩選"):
 
     df = load_data(days)
 
@@ -150,7 +152,7 @@ if st.button("開始 V6 鎖碼篩選"):
     df = df.dropna(subset=[stock_col])
 
     df[buy_col] = df[buy_col].apply(to_number)
-    df["買超張數"] = df[buy_col] / 1000
+    df["買超張數"] = df[buy_col] / 1000  # 千股
 
     name_map = {}
     if name_col:
@@ -167,14 +169,14 @@ if st.button("開始 V6 鎖碼篩選"):
             if is_etf(stock):
                 continue
 
-            g = g.sort_values(g.columns[0])
+            g = g.sort_index()
 
             last3 = g.tail(3)["買超張數"].sum()
             last5 = g.tail(5)["買超張數"].sum()
             last10 = g.tail(10)["買超張數"].sum()
             last20 = g.tail(20)["買超張數"].sum()
 
-            # 🔥 連買強度
+            # 🔥 合理版強度（不會爆炸）
             inst_strength = (last3/3) + (last5/5) + (last10/10)
 
             price = get_price(stock)
@@ -182,33 +184,34 @@ if st.button("開始 V6 鎖碼篩選"):
                 continue
 
             score = (
-                inst_strength * 200 +
-                last20 * 0.05 +
-                (1 if price["ma_up"] else 0) * 15 +
-                (1 if price["breakout"] else 0) * 25 +
-                (1 if price["vol_break"] else 0) * 15
+                inst_strength * 120 +
+                last20 * 0.03 +
+                (1 if price["ma_up"] else 0) * 10 +
+                (1 if price["breakout"] else 0) * 15 +
+                (1 if price["vol_break"] else 0) * 10
             )
 
             # =========================
-            # 🔥 V6 核心鎖碼條件（重點）
+            # 🔥 V6.1 核心鎖碼條件（合理版）
             # =========================
             if not (
-                inst_strength > 5 and
-                last10 > 2 and
-                score > 60 and
-                price["ma_up"] and
-                price["breakout"]
+                inst_strength > 0.8 and
+                last10 > 10 and
+                score > 35 and
+                price["ma_up"]
             ):
                 continue
 
             result.append({
                 "股票代號": stock,
                 "名稱": name_map.get(stock, ""),
-                "連買強度": inst_strength,
+                "連買強度": round(inst_strength, 2),
                 "近20買超(千股)": last20,
                 "收盤": price["price"],
                 "MA20": price["ma20"],
-                "分數": score
+                "突破": price["breakout"],
+                "量增": price["vol_break"],
+                "分數": round(score, 2)
             })
 
         except:
@@ -217,18 +220,18 @@ if st.button("開始 V6 鎖碼篩選"):
     rank_df = pd.DataFrame(result)
 
     if rank_df.empty:
-        st.error("沒有鎖碼股（條件太嚴）")
+        st.error("沒有鎖碼股（可再放寬條件）")
         st.stop()
 
     rank_df = rank_df.sort_values("分數", ascending=False)
 
-    st.success(f"鎖碼完成：{len(rank_df)} 檔（通常 10~50 檔）")
+    st.success(f"鎖碼完成：{len(rank_df)} 檔（正常應該 10~80 檔）")
 
     st.dataframe(rank_df, use_container_width=True)
 
     st.download_button(
         "下載CSV",
         rank_df.to_csv(index=False).encode("utf-8-sig"),
-        "v6_lock.csv",
+        "v61_lock.csv",
         "text/csv"
     )
