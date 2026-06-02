@@ -3,15 +3,13 @@ import pandas as pd
 import requests
 from datetime import datetime, timedelta
 import time
-# 繪圖模組需要的套件
 import yfinance as yf
 import matplotlib.pyplot as plt
-import mplfinance as mpf
 
 st.set_page_config(page_title="投信鎖碼股 V9.2", layout="wide")
 st.title("投信鎖碼股 V9.2（平衡實戰版）")
 
-# --- 您的原始核心邏輯 (完全原樣保留) ---
+# --- 您的原始核心邏輯 (與您成功運行時一模一樣) ---
 def get_day(date):
     url = f"https://www.twse.com.tw/rwd/zh/fund/TWT44U?date={date}&response=json"
     try:
@@ -44,7 +42,7 @@ def find(df, keys):
             if k in str(c): return c
     return None
 
-# --- 獨立掛載的繪圖函數 (完全隔離) ---
+# --- 獨立掛載的繪圖函數 (完全隔離，不會影響主邏輯) ---
 def draw_chart(stock_code):
     try:
         # 自動識別上市(.TW)或上櫃(.TWO)
@@ -54,7 +52,7 @@ def draw_chart(stock_code):
             st.warning(f"⚠️ 找不到 {stock_code} 的市場數據")
             return
         
-        # 簡單範例繪圖
+        # 繪圖
         fig, ax = plt.subplots()
         ax.plot(df['Close'], label='Close Price')
         ax.set_title(f"{stock_code} Price Chart")
@@ -62,7 +60,7 @@ def draw_chart(stock_code):
     except Exception as e:
         st.error(f"繪圖模組錯誤: {e}")
 
-# --- 主程式區 ---
+# --- 主程式區 (完全沒動) ---
 if st.button("開始 V9.2"):
     df = load(30)
     if df.empty: st.error("沒有抓到資料"); st.stop()
@@ -99,7 +97,6 @@ if st.button("開始 V9.2"):
     if out.empty: st.warning("目前市場沒有明顯投信鎖碼"); st.stop()
     out = out.sort_values("強度", ascending=False)
     
-    # 顯示表格
     st.success(f"完成：{len(out)} 檔")
     st.dataframe(out)
 
