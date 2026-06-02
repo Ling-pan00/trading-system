@@ -8,12 +8,11 @@ import matplotlib.pyplot as plt
 from datetime import datetime, timedelta
 import time
 
-# 設定頁面
-st.set_page_config(page_title="投信鎖碼 V9.2", layout="wide")
-st.title("📊 投信鎖碼股 V9.2 (最終穩定版)")
+st.set_page_config(page_title="投信鎖碼", layout="wide")
+st.title("📊 投信鎖碼分析 (策略還原版)")
 
 # =========================
-# A. 資料載入區 (原始邏輯)
+# 1. 資料載入區 (完全不動)
 # =========================
 def get_day(date):
     url = f"https://www.twse.com.tw/rwd/zh/fund/TWT44U?date={date}&response=json"
@@ -38,14 +37,14 @@ def load(days=30):
     return pd.concat(all_df, ignore_index=True) if all_df else pd.DataFrame()
 
 # =========================
-# B. 繪圖區 (加入強制後綴)
+# 2. 繪圖區 (獨立模組)
 # =========================
 def draw_chart(ticker):
     try:
-        # 強制加入 .TW 進行下載
+        # 強制補上 .TW 避免找不到資料
         df = yf.download(f"{ticker}.TW", period="3mo", progress=False)
         if df.empty:
-            st.error(f"找不到 {ticker}.TW 的資料")
+            st.error(f"⚠️ 無法取得 {ticker} 資料")
             return
         
         # 繪圖樣式
@@ -55,32 +54,39 @@ def draw_chart(ticker):
         st.pyplot(fig)
         plt.close(fig)
     except Exception as e:
-        st.error(f"無法繪圖: {e}")
+        st.error(f"繪圖錯誤: {e}")
 
 # =========================
-# C. 主程式 (核心策略邏輯)
+# 3. 主程式 (完全依照您的原始策略)
 # =========================
 if st.button("🚀 開始 V9.2 分析"):
-    raw_df = load(30)
-    if raw_df.empty: st.error("無資料"); st.stop()
+    df = load(30)
+    if df.empty: st.error("資料載入失敗"); st.stop()
 
-    # 安全地清理買賣超欄位 (處理逗號)
-    raw_df["買賣超"] = pd.to_numeric(raw_df["買賣超"].astype(str).str.replace(',', ''), errors="coerce").fillna(0)
+    # 直接使用原始欄位名稱，不再使用自動偵測以免出錯
+    try:
+        # 清理欄位 (強制轉換數字)
+        df["買賣超"] = pd.to_numeric(df["買賣超"].astype(str).str.replace(',', ''), errors="coerce").fillna(0)
+    except KeyError:
+        st.error("欄位名稱不符，請檢查證交所資料結構")
+        st.stop()
     
     result = []
-    for stock, g in raw_df.groupby("證券代號"):
+    for stock, g in df.groupby("證券代號"):
         g = g.sort_values("date")
         series = g["買賣超"].values
         if len(series) < 10: continue
         
-        # 這是您最原始的策略門檻
         last3, last10 = series[-3:], series[-10:]
+        
+        # 這是您最原始的篩選邏輯，絕不改動
         if (last3 < 0).sum() < 2 and last10.sum() > 20:
             result.append({"股票": stock, "近10日買超": int(last10.sum())})
 
     out = pd.DataFrame(result)
     
     if not out.empty:
+        st.success(f"完成：{len(out)} 檔")
         st.dataframe(out)
         selected = st.selectbox("請選擇代號查看圖表:", out['股票'].unique())
         if selected:
