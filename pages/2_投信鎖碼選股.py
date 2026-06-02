@@ -4,8 +4,8 @@ import requests
 from datetime import datetime, timedelta
 import time
 
-st.set_page_config(page_title="投信鎖碼股 V9.3-lite", layout="wide")
-st.title("投信鎖碼股 V9.3-lite（穩定不空版）")
+st.set_page_config(page_title="投信鎖碼股 Signal版", layout="wide")
+st.title("投信鎖碼股 V9.3（訊號 + 進場區間 + 集中度）")
 
 # =========================
 # TWSE 投信資料
@@ -15,24 +15,7 @@ def get_day(date):
     try:
         r = requests.get(url, timeout=10)
         data = r.json()
-        if data.get("stat") != "OK":
-            return None
 
-        df = pd.DataFrame(data["data"], columns=data["fields"])
-        df["date"] = date
-        return df
-    except:
-        return None
-
-
-# =========================
-# 外資資料
-# =========================
-def get_foreign(date):
-    url = f"https://www.twse.com.tw/rwd/zh/fund/TWT38U?date={date}&response=json"
-    try:
-        r = requests.get(url, timeout=10)
-        data = r.json()
         if data.get("stat") != "OK":
             return None
 
@@ -46,31 +29,23 @@ def get_foreign(date):
 # =========================
 # 抓資料
 # =========================
-def load(days=30):
-    inst = []
-    foreign = []
+def load(days=40):
+    all_df = []
     today = datetime.today()
 
     for i in range(days * 2):
         d = (today - timedelta(days=i)).strftime("%Y%m%d")
+        df = get_day(d)
 
-        df1 = get_day(d)
-        df2 = get_foreign(d)
-
-        if df1 is not None and not df1.empty:
-            inst.append(df1)
-        if df2 is not None and not df2.empty:
-            foreign.append(df2)
+        if df is not None and not df.empty:
+            all_df.append(df)
 
         time.sleep(0.02)
 
-        if len(inst) >= days:
+        if len(all_df) >= days:
             break
 
-    inst_df = pd.concat(inst, ignore_index=True) if inst else pd.DataFrame()
-    foreign_df = pd.concat(foreign, ignore_index=True) if foreign else pd.DataFrame()
-
-    return inst_df, foreign_df
+    return pd.concat(all_df, ignore_index=True) if all_df else pd.DataFrame()
 
 
 # =========================
@@ -85,105 +60,103 @@ def find(df, keys):
 
 
 # =========================
+# 訊號判斷
+# =========================
+def signal_class(last3_sum, last10_sum):
+    momentum = last3_sum / (abs(last10_sum) + 1)
+
+    if last10_sum > 50 and last3_sum > 20:
+        return "🔥 現在可以買"
+    elif last10_sum > 0 and momentum < 0.3:
+        return "🟡 等回檔"
+    else:
+        return "🔴 已過追價點"
+
+
+# =========================
+# 集中度（proxy）
+# =========================
+def concentration(series):
+    if len(series) < 10:
+        return 0
+    last3 = abs(series[-3:].sum())
+    last10 = abs(series[-10:].sum())
+    return round(last3 / (last10 + 1), 3)
+
+
+# =========================
 # 主程式
 # =========================
-if st.button("開始 V9.3-lite"):
+if st.button("開始分析"):
 
-    inst_df, foreign_df = load(30)
+    df = load(40)
 
-    if inst_df.empty:
-        st.error("投信資料不足")
+    if df.empty:
+        st.error("沒有資料")
         st.stop()
 
-    stock_col = find(inst_df, ["證券代號"])
-    buy_col = find(inst_df, ["買賣超"])
+    stock_col = find(df, ["證券代號"])
+    buy_col = find(df, ["買賣超"])
 
-    inst_df[buy_col] = pd.to_numeric(inst_df[buy_col], errors="coerce").fillna(0)
+    if stock_col is None or buy_col is None:
+        st.error("欄位解析失敗，請檢查 TWSE 回傳")
+        st.write(df.columns.tolist())
+        st.stop()
 
-    # =========================
-    # 外資整理（安全版）
-    # =========================
-    foreign_map = {}
-    if not foreign_df.empty:
-        f_stock = find(foreign_df, ["證券代號"])
-        f_buy = find(foreign_df, ["買賣超"])
-
-        foreign_df[f_buy] = pd.to_numeric(foreign_df[f_buy], errors="coerce").fillna(0)
-
-        for stock, g in foreign_df.groupby(f_stock):
-            g = g.sort_values("date")
-            foreign_map[stock] = g[f_buy].tail(10).sum()
+    df[buy_col] = pd.to_numeric(df[buy_col], errors="coerce").fillna(0)
 
     result = []
 
-    # =========================
-    # 鎖碼核心
-    # =========================
-    for stock, g in inst_df.groupby(stock_col):
+    for stock, g in df.groupby(stock_col):
 
-        try:
-            g = g.sort_values("date")
-            series = g[buy_col].values
+        g = g.sort_values("date")
+        series = g[buy_col].values
 
-            if len(series) < 10:
-                continue
-
-            last3 = series[-3:]
-            last10 = series[-10:]
-
-            last3_sum = last3.sum()
-            last10_sum = last10.sum()
-
-            # =========================
-            # ✔ 條件1：允許輕微洗盤
-            # =========================
-            if (last3 < 0).sum() >= 2:
-                continue
-
-            # =========================
-            # ✔ 條件2：投信方向要偏多
-            # =========================
-            if last10_sum <= 5:
-                continue
-
-            # =========================
-            # ✔ 條件3：去雜訊（放寬）
-            # =========================
-            if abs(last10_sum) < 10:
-                continue
-
-            # =========================
-            # ✔ 條件4：外資「不能大賣」（放寬版）
-            # =========================
-            foreign_sum = foreign_map.get(stock, 0)
-
-            if foreign_sum < -120:   # 放寬，避免誤殺
-                continue
-
-            # =========================
-            # ✔ 穩定度 & 強度
-            # =========================
-            stability = last10_sum / (abs(last3_sum) + 1)
-            strength = last3_sum / (abs(last10_sum) + 1)
-
-            result.append({
-                "股票": stock,
-                "強度": round(strength, 4),
-                "穩定度": round(stability, 4),
-                "投信10日": int(last10_sum),
-                "外資10日": int(foreign_sum)
-            })
-
-        except:
+        if len(series) < 10:
             continue
+
+        last3 = series[-3:].sum()
+        last10 = series[-10:].sum()
+
+        # =========================
+        # 基本鎖碼濾網（不會太嚴）
+        # =========================
+        if last10 <= -20:
+            continue
+
+        if last3 < -10:
+            continue
+
+        # =========================
+        # 指標
+        # =========================
+        strength = last3 / (abs(last10) + 1)
+        conc = concentration(series)
+        sig = signal_class(last3, last10)
+
+        # =========================
+        # 投信成本區（推估）
+        # =========================
+        avg_cost_proxy = round(last10 / 10, 2)
+
+        result.append({
+            "股票": stock,
+            "訊號": sig,
+            "強度": round(strength, 4),
+            "集中度": conc,
+            "投信10日": int(last10),
+            "近3日": int(last3),
+            "成本區(推估)": avg_cost_proxy
+        })
 
     out = pd.DataFrame(result)
 
     if out.empty:
-        st.warning("目前市場偏整理，無明顯鎖碼股（正常）")
+        st.warning("目前沒有明顯投信鎖碼股")
         st.stop()
 
-    out = out.sort_values("強度", ascending=False)
+    # 排序
+    out = out.sort_values(["訊號", "強度"], ascending=[True, False])
 
-    st.success(f"完成：{len(out)} 檔（穩定版）")
+    st.success(f"完成：{len(out)} 檔（訊號版）")
     st.dataframe(out)
