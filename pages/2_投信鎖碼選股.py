@@ -8,8 +8,8 @@ import yfinance as yf
 # =========================
 # Page
 # =========================
-st.set_page_config(page_title="投信鎖碼股 V4.1", layout="wide")
-st.title("投信鎖碼股篩選器 V4.1（穩定防空版）")
+st.set_page_config(page_title="投信鎖碼股 V5", layout="wide")
+st.title("投信鎖碼股篩選器 V5（法人訊號版）")
 
 # =========================
 # TWSE資料
@@ -42,7 +42,7 @@ def to_number(x):
 # 抓資料
 # =========================
 @st.cache_data(ttl=3600)
-def load_data(days=80):
+def load_data(days=60):
     all_data = []
     today = datetime.today()
 
@@ -68,8 +68,8 @@ def load_data(days=80):
 @st.cache_data(ttl=86400)
 def get_price(stock):
     try:
-        ticker = yf.Ticker(f"{stock}.TW")
-        hist = ticker.history(period="6mo")
+        t = yf.Ticker(f"{stock}.TW")
+        hist = t.history(period="6mo")
 
         if hist is None or hist.empty:
             return None
@@ -77,24 +77,29 @@ def get_price(stock):
         close = hist["Close"]
         vol = hist["Volume"]
 
-        if len(close) < 30:
+        if len(close) < 60:
             return None
 
-        last = close.iloc[-1]
+        price = close.iloc[-1]
         ma20 = close.rolling(20).mean().iloc[-1]
-        ma60 = close.rolling(60).mean().iloc[-1] if len(close) >= 60 else ma20
+        ma20_prev = close.rolling(20).mean().iloc[-5]
 
-        rise20 = (last / close.iloc[-20] - 1) * 100 if len(close) > 20 else 0
+        ma20_up = ma20 > ma20_prev
+
+        high20 = close.rolling(20).max().iloc[-2]
+        breakout = price > high20
+
+        vol_break = vol.iloc[-1] > vol.tail(20).mean() * 1.5
+
+        fake_break = (vol.iloc[-1] > vol.tail(10).mean() * 2.5) and ((price / close.iloc[-2] - 1) > 0.05)
 
         return {
-            "收盤價": round(last, 2),
+            "收盤價": round(price, 2),
             "MA20": round(ma20, 2),
-            "MA60": round(ma60, 2),
-            "近20日漲幅%": round(rise20, 2),
-            "距離月線%": round((last - ma20) / ma20 * 100, 2) if ma20 else 0,
-            "距離季線%": round((last - ma60) / ma60 * 100, 2) if ma60 else 0,
-            "5日均量": int(vol.tail(5).mean()) if len(vol) >= 5 else 0,
-            "20日均量": int(vol.tail(20).mean()) if len(vol) >= 20 else 0
+            "MA60": round(close.rolling(60).mean().iloc[-1], 2),
+            "MA20上升": ma20_up,
+            "突破": breakout and vol_break,
+            "假突破": fake_break
         }
 
     except:
@@ -103,10 +108,10 @@ def get_price(stock):
 # =========================
 # UI
 # =========================
-days = st.slider("回溯天數", 40, 120, 60)
-min_keep = st.slider("最少保留檔數（防空）", 5, 50, 20)
+days = st.slider("回溯天數", 40, 100, 60)
+min_keep = st.slider("最少保留檔數", 5, 50, 20)
 
-if st.button("開始篩選 V4.1"):
+if st.button("開始 V5 篩選"):
 
     df = load_data(days)
 
@@ -116,149 +121,92 @@ if st.button("開始篩選 V4.1"):
 
     stock_col = "證券代號"
 
-    buy_col = [c for c in df.columns if "買賣超" in c]
+    buy_col = [c for c in df.columns if "買賣超" in c][0]
     name_col = [c for c in df.columns if "證券名稱" in c]
-
-    if not buy_col:
-        st.error("找不到買賣超欄位")
-        st.stop()
-
-    buy_col = buy_col[0]
     name_col = name_col[0] if name_col else None
 
     df[buy_col] = df[buy_col].apply(to_number)
     df["買超張數"] = df[buy_col] / 1000
     df["日期"] = pd.to_datetime(df["日期"])
 
-    # =========================
-    # 名稱
-    # =========================
     name_map = {}
     if name_col:
         name_map = df[[stock_col, name_col]].drop_duplicates().set_index(stock_col)[name_col].to_dict()
 
-    # =========================
-    # 籌碼計算
-    # =========================
     result = []
 
     for stock, g in df.groupby(stock_col):
 
         g = g.sort_values("日期")
 
-        values = g["買超張數"].values
+        # ===== 投信加權 =====
+        last10 = g.tail(10)["買超張數"].sum()
+        last3 = g.tail(3)["買超張數"].sum()
 
-        streak = 0
-        for v in reversed(values):
-            if v > 0:
-                streak += 1
-            else:
-                break
+        inst_strength = (last3 / 3) - (last10 / 10)
 
         buy20 = g.tail(20)["買超張數"].sum()
-        buy60 = g.tail(60)["買超張數"].sum()
 
-        accel = g.tail(5)["買超張數"].sum() - g.tail(20).head(15)["買超張數"].sum() / 3
+        # ===== 股價資料 =====
+        price_data = get_price(stock)
+
+        if price_data is None:
+            continue
+
+        if price_data["假突破"]:
+            continue
+
+        # ===== 條件 =====
+        if price_data["收盤價"] <= price_data["MA20"]:
+            continue
+
+        # ===== 起漲條件 =====
+        if not price_data["突破"] and inst_strength < 0:
+            continue
+
+        # ===== 分數 =====
+        score = (
+            inst_strength * 40 +
+            buy20 * 0.02 +
+            (1 if price_data["突破"] else 0) * 50 +
+            (1 if price_data["MA20上升"] else 0) * 20
+        )
 
         result.append({
             "股票代號": stock,
-            "投信連買天數": streak,
-            "近20日買超張數": buy20,
-            "買超加速度": accel
+            "股票名稱": name_map.get(stock, ""),
+            "投信強度": inst_strength,
+            "近20買超": buy20,
+            "收盤價": price_data["收盤價"],
+            "MA20": price_data["MA20"],
+            "MA60": price_data["MA60"],
+            "突破": price_data["突破"],
+            "MA20上升": price_data["MA20上升"],
+            "分數": score
         })
 
     rank_df = pd.DataFrame(result)
 
-    # =========================
-    # 技術面
-    # =========================
-    price_list = []
+    if rank_df.empty:
+        st.error("沒有符合條件股票（請放寬條件）")
+        st.stop()
 
-    progress = st.progress(0)
+    rank_df = rank_df.sort_values("分數", ascending=False)
 
-    for i, stock in enumerate(rank_df["股票代號"]):
+    # ===== 防空機制 =====
+    if len(rank_df) < min_keep:
+        st.warning("結果太少，自動放寬條件")
+        rank_df = rank_df.sort_values("分數", ascending=False).head(min_keep)
 
-        data = get_price(stock)
+    st.success(f"V5結果：{len(rank_df)} 檔")
 
-        if data:
-            data["股票代號"] = stock
-            price_list.append(data)
+    st.dataframe(rank_df, use_container_width=True)
 
-        progress.progress((i + 1) / len(rank_df))
-
-    progress.empty()
-
-    price_df = pd.DataFrame(price_list)
-
-    rank_df = rank_df.merge(price_df, on="股票代號", how="left")
-    rank_df["股票名稱"] = rank_df["股票代號"].map(name_map)
-
-    # =========================
-    # 防呆補值（關鍵）
-    # =========================
-    for c in rank_df.columns:
-        if rank_df[c].dtype != "O":
-            rank_df[c] = rank_df[c].fillna(0)
-
-    # =========================
-    # 初篩（寬鬆）
-    # =========================
-    filtered = rank_df[
-        (rank_df["投信連買天數"] >= 2) &
-        (rank_df["近20日買超張數"] >= 100) &
-        (rank_df["近20日漲幅%"] < 40)
-    ]
-
-    # =========================
-    # 分數
-    # =========================
-    filtered["鎖碼分數"] = (
-        filtered["投信連買天數"] * 20 +
-        filtered["近20日買超張數"] * 0.02 +
-        filtered["買超加速度"] * 0.5 -
-        filtered["近20日漲幅%"] * 1.2
-    )
-
-    filtered = filtered.sort_values("鎖碼分數", ascending=False)
-
-    # =========================
-    # 防空機制（核心）
-    # =========================
-    if len(filtered) < min_keep:
-        st.warning(f"結果太少（{len(filtered)} 檔），自動放寬條件")
-
-        filtered = rank_df.sort_values("鎖碼分數", ascending=False).head(min_keep)
-
-    # =========================
-    # 補名稱
-    # =========================
-    filtered["股票名稱"] = filtered["股票代號"].map(name_map)
-
-    # =========================
-    # 顯示
-    # =========================
-    st.success(f"最終結果：{len(filtered)} 檔")
-
-    show_cols = [
-        "股票代號",
-        "股票名稱",
-        "投信連買天數",
-        "近20日買超張數",
-        "買超加速度",
-        "收盤價",
-        "MA20",
-        "MA60",
-        "近20日漲幅%",
-        "鎖碼分數"
-    ]
-
-    st.dataframe(filtered[show_cols], use_container_width=True)
-
-    csv = filtered.to_csv(index=False).encode("utf-8-sig")
+    csv = rank_df.to_csv(index=False).encode("utf-8-sig")
 
     st.download_button(
         "下載CSV",
         csv,
-        "投信鎖碼V4_1.csv",
+        "投信鎖碼V5.csv",
         "text/csv"
     )
