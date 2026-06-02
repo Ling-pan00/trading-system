@@ -1,13 +1,22 @@
+import streamlit as st
 import pandas as pd
 import requests
 import time
 from datetime import datetime, timedelta
 
-# ======================
-# 下載證交所投信資料
-# ======================
+st.set_page_config(
+    page_title="投信鎖碼股排行",
+    layout="wide"
+)
 
-def get_twse_investment(date_str):
+st.title("投信鎖碼股排行（免費版）")
+
+# -----------------------
+# API
+# -----------------------
+
+@st.cache_data(ttl=3600)
+def get_day_data(date_str):
 
     url = (
         "https://www.twse.com.tw/rwd/zh/fund/TWT44U"
@@ -15,7 +24,12 @@ def get_twse_investment(date_str):
     )
 
     try:
-        r = requests.get(url, timeout=10)
+
+        r = requests.get(
+            url,
+            timeout=10
+        )
+
         data = r.json()
 
         if "data" not in data:
@@ -34,15 +48,35 @@ def get_twse_investment(date_str):
         return pd.DataFrame()
 
 
-# ======================
-# 取得最近N天資料
-# ======================
+# -----------------------
+# 數字轉換
+# -----------------------
 
-def download_days(days=60):
+def to_number(x):
 
-    all_data = []
+    try:
+        return int(
+            str(x)
+            .replace(",", "")
+            .replace("+", "")
+        )
+
+    except:
+        return 0
+
+
+# -----------------------
+# 抓最近交易資料
+# -----------------------
+
+@st.cache_data(ttl=3600)
+def load_data(days=30):
+
+    data_list = []
 
     today = datetime.today()
+
+    progress = st.progress(0)
 
     for i in range(days):
 
@@ -50,104 +84,138 @@ def download_days(days=60):
 
         date_str = d.strftime("%Y%m%d")
 
-        print("下載:", date_str)
+        df = get_day_data(date_str)
 
-        df = get_twse_investment(date_str)
+        if not df.empty:
+            data_list.append(df)
 
-        if len(df) > 0:
-            all_data.append(df)
+        progress.progress((i + 1) / days)
 
-        time.sleep(0.3)
+        time.sleep(0.05)
 
-    return pd.concat(all_data, ignore_index=True)
+    progress.empty()
 
+    if len(data_list) == 0:
+        return pd.DataFrame()
 
-# ======================
-# 數字清理
-# ======================
-
-def clean_number(x):
-
-    try:
-        return int(str(x).replace(",", ""))
-    except:
-        return 0
+    return pd.concat(
+        data_list,
+        ignore_index=True
+    )
 
 
-# ======================
-# 主流程
-# ======================
+# -----------------------
+# 天數選擇
+# -----------------------
 
-df = download_days(60)
-
-# 欄位名稱可能因證交所格式調整而略有不同
-stock_col = "證券代號"
-buy_col = "投信買賣超股數"
-
-df[buy_col] = df[buy_col].apply(clean_number)
-
-# 張數
-df["買賣超張數"] = df[buy_col] / 1000
-
-# 日期排序
-df["日期"] = pd.to_datetime(df["日期"])
-
-df = df.sort_values(
-    ["證券代號", "日期"]
+days = st.slider(
+    "回溯天數",
+    20,
+    90,
+    60
 )
 
-# ======================
-# 計算連買天數
-# ======================
+if st.button("開始篩選"):
 
-result = []
+    with st.spinner("下載資料中..."):
 
-for stock, g in df.groupby(stock_col):
+        df = load_data(days)
 
-    g = g.sort_values("日期")
+    if df.empty:
 
-    streak = 0
+        st.error("無法取得資料")
 
-    for value in reversed(g["買賣超張數"].tolist()):
+        st.stop()
 
-        if value > 0:
-            streak += 1
-        else:
+    stock_col = "證券代號"
+
+    # 找投信買賣超欄位
+    buy_col = None
+
+    for c in df.columns:
+
+        if "買賣超" in c:
+
+            buy_col = c
             break
 
-    recent20 = g.tail(20)
+    if buy_col is None:
 
-    recent60 = g.tail(60)
+        st.error("找不到投信買賣超欄位")
 
-    result.append({
-        "股票": stock,
-        "連買天數": streak,
-        "近20日買超": recent20["買賣超張數"].sum(),
-        "近60日買超": recent60["買賣超張數"].sum()
-    })
+        st.stop()
 
-rank_df = pd.DataFrame(result)
+    df[buy_col] = df[buy_col].apply(to_number)
 
-# ======================
-# 鎖碼分數
-# ======================
+    df["買超張數"] = df[buy_col] / 1000
 
-rank_df["分數"] = (
-    rank_df["連買天數"] * 3
-    + rank_df["近20日買超"] * 0.02
-    + rank_df["近60日買超"] * 0.01
-)
+    df["日期"] = pd.to_datetime(df["日期"])
 
-rank_df = rank_df.sort_values(
-    "分數",
-    ascending=False
-)
+    result = []
 
-print(rank_df.head(50))
+    for stock, g in df.groupby(stock_col):
 
-rank_df.to_excel(
-    "投信鎖碼排行.xlsx",
-    index=False
-)
+        g = g.sort_values("日期")
 
-print("完成")
+        streak = 0
+
+        values = g["買超張數"].tolist()
+
+        for v in reversed(values):
+
+            if v > 0:
+                streak += 1
+            else:
+                break
+
+        recent20 = g.tail(20)
+
+        recent60 = g.tail(60)
+
+        score = (
+            streak * 5
+            + recent20["買超張數"].sum() * 0.02
+            + recent60["買超張數"].sum() * 0.01
+        )
+
+        result.append({
+            "股票代號": stock,
+            "投信連買天數": streak,
+            "近20日買超": round(
+                recent20["買超張數"].sum(),
+                0
+            ),
+            "近60日買超": round(
+                recent60["買超張數"].sum(),
+                0
+            ),
+            "鎖碼分數": round(
+                score,
+                2
+            )
+        })
+
+    rank_df = pd.DataFrame(result)
+
+    rank_df = rank_df.sort_values(
+        "鎖碼分數",
+        ascending=False
+    )
+
+    st.subheader("Top 50")
+
+    st.dataframe(
+        rank_df.head(50),
+        use_container_width=True
+    )
+
+    csv = rank_df.to_csv(
+        index=False
+    ).encode("utf-8-sig")
+
+    st.download_button(
+        "下載CSV",
+        csv,
+        "投信鎖碼排行.csv",
+        "text/csv"
+    )
