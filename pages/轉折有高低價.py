@@ -97,14 +97,20 @@ if stock_code:
             mpf.make_addplot(df['20MA'], color='purple', width=1)
         ]
 
-        # 調整 panel_ratios 為 (3, 1) 使成交量圖更大
         fig, axlist = mpf.plot(
             df, type='candle', style=s, addplot=plots, 
             returnfig=True, figsize=(12, 7), volume=True,
-            panel_ratios=(3, 1)
+            panel_ratios=(3, 1) # 設定成交量比例
         )
         
         main_ax = axlist[0]
+        volume_ax = axlist[2]
+
+        # 強制 Y 軸數值靠右
+        main_ax.yaxis.tick_right()
+        main_ax.yaxis.set_label_position("right")
+        volume_ax.yaxis.tick_right()
+        volume_ax.yaxis.set_label_position("right")
 
         # 5. 連接轉折線
         if len(zigzag_points) > 1:
