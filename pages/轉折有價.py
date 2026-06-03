@@ -26,7 +26,6 @@ if stock_code:
             break
     
     if df is not None:
-        # 強制整理數據與欄位
         if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
         df = df.apply(pd.to_numeric, errors='coerce')
         
@@ -34,8 +33,6 @@ if stock_code:
         df['5MA'] = df['Close'].rolling(5).mean()
         df['10MA'] = df['Close'].rolling(10).mean()
         df['20MA'] = df['Close'].rolling(20).mean()
-        
-        # 使用 ffill 填補可能的空值，防止 KeyError，最後再 dropna
         df = df.dropna(subset=['Close', '5MA', '10MA', '20MA']).copy()
 
         # 2. 顯示均線數值列
@@ -70,32 +67,40 @@ if stock_code:
                 df.at[idx, 'Label'] = "B"
                 zigzag_points.append((df.index.get_loc(idx), df.loc[idx, 'Low']))
 
-        # 4. 繪圖 (顏色優化)
+        # 4. 繪圖
         mc = mpf.make_marketcolors(up='red', down='green', edge='inherit', wick='inherit', volume='in')
         s = mpf.make_mpf_style(marketcolors=mc, gridstyle='--')
         
-        # 10MA 改為灰色，5MA 保留橙色
-        ap = [mpf.make_addplot(df['5MA'], color='orange', linewidth=1.5),
-              mpf.make_addplot(df['10MA'], color='#888888', linewidth=1),
-              mpf.make_addplot(df['20MA'], color='#999999', linewidth=1)]
+        # 使用 .reindex(df.index) 確保均線數據與主圖完全對齊，徹底解決 KeyError
+        ap = [
+            mpf.make_addplot(df['5MA'].reindex(df.index), color='orange', linewidth=1.5),
+            mpf.make_addplot(df['10MA'].reindex(df.index), color='#888888', linewidth=1),
+            mpf.make_addplot(df['20MA'].reindex(df.index), color='#999999', linewidth=1)
+        ]
         
         fig, axlist = mpf.plot(df, type='candle', style=s, addplot=ap, returnfig=True, figsize=(12, 7), volume=True, panel_ratios=(3, 1))
         
         main_ax = axlist[0]
         main_ax.yaxis.tick_right()
+        main_ax.yaxis.set_label_position("right")
         
-        # 趨勢線改為藍色
+        # 藍色趨勢線
         if len(zigzag_points) > 1:
             x, y = zip(*zigzag_points)
             main_ax.plot(x, y, color='#2196F3', linestyle='-', alpha=0.8, linewidth=2, zorder=3)
             
+        # H/B 標註
         for idx, row in df[df['Label'].notnull()].iterrows():
             x = df.index.get_loc(idx)
             is_h = row['Label'] == "H"
             val = row['High'] if is_h else row['Low']
+            
             main_ax.annotate(row['Label'], xy=(x, val), xytext=(0, 15 if is_h else -25),
-                             textcoords='offset points', ha='center', color='red' if is_h else 'green', weight='bold', fontsize=12)
+                             textcoords='offset points', ha='center', color='red' if is_h else 'green', 
+                             weight='bold', fontsize=12)
+            
             main_ax.annotate(f"{val:.2f}", xy=(x, val), xytext=(0, 30 if is_h else -40),
-                             textcoords='offset points', ha='center', weight='bold', fontsize=9, color='red' if is_h else 'green')
+                             textcoords='offset points', ha='center', weight='bold', fontsize=9,
+                             color='red' if is_h else 'green')
                              
         st.pyplot(fig)
