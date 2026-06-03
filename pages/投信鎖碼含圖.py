@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 from datetime import datetime, timedelta
 
 # ==========================================================
-# 1. 您的原始篩選策略 (完全不動)
+# 1. 您的原始篩選策略 (完全保留，不做任何更動)
 # ==========================================================
 def get_day(date):
     url = f"https://www.twse.com.tw/rwd/zh/fund/TWT44U?date={date}&response=json"
@@ -52,16 +52,17 @@ def run_strategy():
     for stock, g in df.groupby(stock_col):
         g = g.sort_values("date")
         series = g[buy_col].values
+        # 您的原始邏輯 (已保留)
         if len(series) < 10 or (series[-3:] < 0).sum() >= 2 or series[-10:].sum() <= 0: continue
         result.append({"股票": stock})
     return pd.DataFrame(result)
 
 # ==========================================================
-# 2. 獨立繪圖函式 (物理隔離，確保型態正確)
+# 2. 獨立繪圖函式 (專門處理資料，解決型態衝突)
 # ==========================================================
 def draw_chart(stock_id):
     try:
-        # 強制補上後綴解決數據抓取失敗
+        # 強制補上後綴解決 yfinance 資料抓取失敗問題
         ticker = f"{str(stock_id).strip()}.TW" if int(stock_id) < 2000 else f"{str(stock_id).strip()}.TWO"
         df = yf.download(ticker, period="3mo", progress=False)
         
@@ -69,17 +70,18 @@ def draw_chart(stock_id):
             st.error(f"⚠️ 無法取得 {stock_id} 資料")
             return
 
-        # 這裡強制轉型，確保 Open/High/Low/Close 都是 float，解決繪圖崩潰
+        # 強制轉型，確保繪圖資料一定是 float，解決 ValueError
         df = df.apply(pd.to_numeric, errors='coerce').dropna()
         
+        # 繪圖
         fig, ax = mpf.plot(df, type='candle', volume=True, returnfig=True, figsize=(10, 6))
         st.pyplot(fig)
         plt.close(fig)
     except Exception as e:
-        st.error(f"繪圖錯誤: {e}")
+        st.error(f"繪圖發生錯誤: {e}")
 
 # ==========================================================
-# 3. 整合執行
+# 3. 整合執行 (純淨串接，徹底隔絕)
 # ==========================================================
 st.title("投信鎖碼股 V9.2")
 
@@ -87,7 +89,7 @@ if st.button("開始 V9.2"):
     out = run_strategy()
     if not out.empty:
         st.dataframe(out)
-        # 只傳代號，不傳原始 DataFrame，確保隔絕
+        # 僅傳遞代號，不傳遞原始 DataFrame，徹底避免衝突
         sel = st.selectbox("選擇股票看轉折圖:", out['股票'].unique())
         if sel:
             draw_chart(sel)
