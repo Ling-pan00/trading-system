@@ -26,19 +26,21 @@ if stock_code:
             break
     
     if df is not None:
+        # 強制整理數據與欄位
         if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
-        df['Close'] = pd.to_numeric(df['Close'], errors='coerce')
-        df['High'] = pd.to_numeric(df['High'], errors='coerce')
-        df['Low'] = pd.to_numeric(df['Low'], errors='coerce')
+        df = df.apply(pd.to_numeric, errors='coerce')
         
         # 1. 計算均線
         df['5MA'] = df['Close'].rolling(5).mean()
         df['10MA'] = df['Close'].rolling(10).mean()
         df['20MA'] = df['Close'].rolling(20).mean()
+        
+        # 使用 ffill 填補可能的空值，防止 KeyError，最後再 dropna
         df = df.dropna(subset=['Close', '5MA', '10MA', '20MA']).copy()
 
         # 2. 顯示均線數值列
         def get_ma_details(col):
+            if len(df[col]) < 2: return "N/A"
             now, pre = df[col].iloc[-1], df[col].iloc[-2]
             return f"{now:.2f} {'▲' if now >= pre else '▼'}"
 
@@ -68,11 +70,11 @@ if stock_code:
                 df.at[idx, 'Label'] = "B"
                 zigzag_points.append((df.index.get_loc(idx), df.loc[idx, 'Low']))
 
-        # 4. 繪圖
+        # 4. 繪圖 (顏色優化)
         mc = mpf.make_marketcolors(up='red', down='green', edge='inherit', wick='inherit', volume='in')
         s = mpf.make_mpf_style(marketcolors=mc, gridstyle='--')
         
-        # 均線顏色：10MA 改為灰色，降低干擾
+        # 10MA 改為灰色，5MA 保留橙色
         ap = [mpf.make_addplot(df['5MA'], color='orange', linewidth=1.5),
               mpf.make_addplot(df['10MA'], color='#888888', linewidth=1),
               mpf.make_addplot(df['20MA'], color='#999999', linewidth=1)]
@@ -81,9 +83,8 @@ if stock_code:
         
         main_ax = axlist[0]
         main_ax.yaxis.tick_right()
-        main_ax.yaxis.set_label_position("right")
         
-        # 趨勢線改為藍色 (#2196F3) 且加強一點視覺權重
+        # 趨勢線改為藍色
         if len(zigzag_points) > 1:
             x, y = zip(*zigzag_points)
             main_ax.plot(x, y, color='#2196F3', linestyle='-', alpha=0.8, linewidth=2, zorder=3)
@@ -92,15 +93,9 @@ if stock_code:
             x = df.index.get_loc(idx)
             is_h = row['Label'] == "H"
             val = row['High'] if is_h else row['Low']
-            
-            # H/B 彩色標註
             main_ax.annotate(row['Label'], xy=(x, val), xytext=(0, 15 if is_h else -25),
-                             textcoords='offset points', ha='center', color='red' if is_h else 'green', 
-                             weight='bold', fontsize=12)
-            
-            # 數值標註
+                             textcoords='offset points', ha='center', color='red' if is_h else 'green', weight='bold', fontsize=12)
             main_ax.annotate(f"{val:.2f}", xy=(x, val), xytext=(0, 30 if is_h else -40),
-                             textcoords='offset points', ha='center', weight='bold', fontsize=9,
-                             color='red' if is_h else 'green')
+                             textcoords='offset points', ha='center', weight='bold', fontsize=9, color='red' if is_h else 'green')
                              
         st.pyplot(fig)
