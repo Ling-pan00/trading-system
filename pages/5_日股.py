@@ -14,7 +14,6 @@ st.title("📈 技術分析波段自動標註系統")
 def load_data(ticker):
     end_date = (datetime.today() + timedelta(days=1)).strftime('%Y-%m-%d')
     start_date = (datetime.today() - timedelta(days=180)).strftime('%Y-%m-%d')
-    # 嘗試不同的代號後綴
     suffixes = ["", ".T", ".JP", ".TW", ".TWO"]
     for s in suffixes:
         test_ticker = f"{ticker}{s}" if s != "" else ticker
@@ -48,7 +47,7 @@ if ticker_input:
         st.markdown(f"""
         <div style="background-color: #f8f9fa; padding: 10px; border-radius: 5px; font-family: monospace; font-weight: bold;">
             <span style="color: #FF9800;">5MA: {now_5:.2f}</span> | 
-            <span style="color: #2196F3;">10MA: {now_10:.2f}</span> | 
+            <span style="color: #000000;">10MA: {now_10:.2f}</span> | 
             <span style="color: #9C27B0;">20MA: {now_20:.2f}</span>
         </div>
         """, unsafe_allow_html=True)
@@ -74,25 +73,27 @@ if ticker_input:
         # 4. 繪圖
         mc = mpf.make_marketcolors(up='red', down='green', edge='inherit', wick='inherit', volume='in')
         s = mpf.make_mpf_style(marketcolors=mc, gridstyle='--', y_on_right=True)
+        
+        # 繪製均線，10MA 設定為黑色
         ap = [mpf.make_addplot(df['5MA'], color='orange'),
-              mpf.make_addplot(df['10MA'], color='blue'),
+              mpf.make_addplot(df['10MA'], color='black'),
               mpf.make_addplot(df['20MA'], color='purple')]
         
         fig, axlist = mpf.plot(df, type='candle', style=s, addplot=ap, returnfig=True, figsize=(12, 7), volume=True)
         
         main_ax = axlist[0]
-        # 繪製 ZigZag 線
+        # 繪製 ZigZag 線，顏色設定為藍色
         if len(zigzag_points) > 1:
             x, y = zip(*zigzag_points)
-            main_ax.plot(x, y, color='black', alpha=0.5, linewidth=1.5, zorder=3)
+            main_ax.plot(x, y, color='blue', alpha=0.5, linewidth=1.5, zorder=3)
         
-        # 標註 H/B 與數值 (已調整為離圖更近)
+        # 標註 H/B 與數值
         for idx, row in df[df['Label'].notnull()].iterrows():
             x_idx = df.index.get_loc(idx)
             is_h = (row['Label'] == "H")
             val = row['High'] if is_h else row['Low']
             
-            # 設定更緊湊的偏移量
+            # 設定緊湊偏移量
             v_offset = 20 if is_h else -25 
             
             # 標註 H 或 B
