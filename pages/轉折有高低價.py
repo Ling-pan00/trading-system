@@ -12,7 +12,7 @@ st.title("📈 5MA 轉折波段自動標註系統")
 # 使用者輸入股票代號
 stock_code = st.text_input("請輸入台灣股票代號 (例如: 2330, 4768):", "4768")
 
-# 設定查詢時間範圍：設定到明天以確保包含今日最新資料
+# 設定查詢時間範圍：確保包含今日
 end_date = (datetime.today() + timedelta(days=1)).strftime('%Y-%m-%d')
 start_date = (datetime.today() - timedelta(days=180)).strftime('%Y-%m-%d')
 
@@ -110,17 +110,23 @@ if stock_code:
             x_coords, y_coords = zip(*zigzag_points)
             main_ax.plot(x_coords, y_coords, color='black', alpha=0.5, linewidth=1.5, zorder=3)
 
-        # 6. 標註 H/B 與數值
+        # 6. 標註 H/B 與價格數值 (調整為圖片樣式)
         for idx, row in df[df['Label'].notnull()].iterrows():
             x = df.index.get_loc(idx)
             is_h = row['Label'] == "H"
             val = row['High'] if is_h else row['Low']
-            # 組合字串：H 或 B 加上數值
-            label_text = f"{row['Label']}\n{val:.2f}"
+            color = "red" if is_h else "green"
             
-            main_ax.text(x, val, label_text,
-                        color='white', weight='bold', fontsize=8,
-                        ha='center', va='center',
-                        bbox=dict(boxstyle="circle,pad=0.2", fc="red" if is_h else "green", ec="none", alpha=0.8))
+            # 圓圈標記
+            main_ax.annotate(row['Label'], xy=(x, val), xytext=(0, 20 if is_h else -20),
+                            textcoords='offset points', ha='center', va='center',
+                            color='white', weight='bold',
+                            bbox=dict(boxstyle="circle", fc=color, ec="none", alpha=1))
+            
+            # 價格數值框
+            main_ax.annotate(f"{val:.2f}", xy=(x, val), xytext=(0, 45 if is_h else -45),
+                            textcoords='offset points', ha='center', va='center',
+                            color='white', weight='bold', fontsize=9,
+                            bbox=dict(boxstyle="round,pad=0.3", fc=color, ec="none", alpha=1))
 
         st.pyplot(fig)
