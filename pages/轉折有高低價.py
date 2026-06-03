@@ -49,13 +49,14 @@ if stock_code:
         for col in ['Close', 'High', 'Low']:
             df[col] = pd.to_numeric(df[col], errors='coerce')
 
-        # 2. 轉折波段邏輯 (使用填補過的數值計算，不刪除原資料列)
-        df_temp = df.fillna(0)
+        # 2. 轉折波段邏輯
+        df_temp = df.fillna(0).copy()
         df['State'] = np.where(df_temp['Close'] > df_temp['5MA'], 1, -1)
         df['State_Group'] = (df['State'] != df['State'].shift()).cumsum()
 
-        zigzag_points = []
+        # 初始化 Label 欄位
         df['Label'] = np.nan
+        zigzag_points = []
         grouped = df.groupby('State_Group')
 
         for g_id, group_data in grouped:
@@ -64,13 +65,13 @@ if stock_code:
             if state == 1:
                 idx = group_data['High'].idxmax()
                 zigzag_points.append((df.index.get_loc(idx), df.loc[idx, 'High']))
-                df.loc[idx, 'Label'] = "H"
+                df.at[idx, 'Label'] = "H"
             else:
                 idx = group_data['Low'].idxmin()
                 zigzag_points.append((df.index.get_loc(idx), df.loc[idx, 'Low']))
-                df.loc[idx, 'Label'] = "B"
+                df.at[idx, 'Label'] = "B"
 
-        # 3. 取得均線數據與箭頭 (直接在原始df上判斷最後一筆)
+        # 3. 取得均線數據
         def get_ma_details(col_name):
             data = df[col_name].dropna()
             if len(data) < 2: return "N/A"
