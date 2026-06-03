@@ -68,12 +68,15 @@ if stock_code:
                 df.at[idx, 'Label'] = "B"
                 zigzag_points.append((df.index.get_loc(idx), df.loc[idx, 'Low']))
 
-        # 4. 繪圖
+        # 4. 繪圖 (均線統一為實線並調細)
         mc = mpf.make_marketcolors(up='red', down='green', edge='inherit', wick='inherit', volume='in')
         s = mpf.make_mpf_style(marketcolors=mc, gridstyle='--')
-        ap = [mpf.make_addplot(df['5MA'], color='orange'),
-              mpf.make_addplot(df['10MA'], color='blue'),
-              mpf.make_addplot(df['20MA'], color='purple')]
+        
+        ap = [
+            mpf.make_addplot(df['5MA'], color='orange', width=0.8),
+            mpf.make_addplot(df['10MA'], color='blue', width=0.8),
+            mpf.make_addplot(df['20MA'], color='purple', width=0.8)
+        ]
         
         fig, axlist = mpf.plot(df, type='candle', style=s, addplot=ap, returnfig=True, figsize=(12, 7), volume=True, panel_ratios=(3, 1))
         
@@ -90,14 +93,12 @@ if stock_code:
             is_h = row['Label'] == "H"
             val = row['High'] if is_h else row['Low']
             
-            # 標註 H 或 B (去除底色框，直接顯示彩色文字)
             main_ax.annotate(row['Label'], xy=(x, val), xytext=(0, 15 if is_h else -25),
                              textcoords='offset points', ha='center', color='red' if is_h else 'green', 
                              weight='bold', fontsize=12)
             
-            # 標註數值 (去除底色框)
             main_ax.annotate(f"{val:.2f}", xy=(x, val), xytext=(0, 30 if is_h else -40),
                              textcoords='offset points', ha='center', weight='bold', fontsize=9,
                              color='red' if is_h else 'green')
-                             
+                            
         st.pyplot(fig)
