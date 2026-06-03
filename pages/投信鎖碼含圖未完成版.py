@@ -1,17 +1,16 @@
 import streamlit as st
 import pandas as pd
-import yfinance as yf
+import twstock
 import mplfinance as mpf
-import numpy as np
 import requests
 from datetime import datetime, timedelta
 import time
 
 st.set_page_config(page_title="投信鎖碼股 V9.2", layout="wide")
-st.title("投信鎖碼股 V9.2（平衡實戰版）")
+st.title("投信鎖碼股 V9.2（台股穩定版）")
 
 # =========================
-# 核心函數：轉折點計算
+# 核心：轉折點計算
 # =========================
 def get_zigzag_points(df):
     points = []
@@ -25,21 +24,27 @@ def get_zigzag_points(df):
     return points
 
 # =========================
-# 強健的下載函數 (含重試)
+# 改用 twstock 抓取歷史資料
 # =========================
 @st.cache_data(ttl=3600)
-def get_stock_data_with_retry(ticker, retries=3):
-    for i in range(retries):
-        try:
-            df = yf.download(ticker, period="3mo", progress=False, timeout=15, threads=True)
-            if not df.empty:
-                return df
-        except:
-            time.sleep(1)
+def get_twstock_data(sid):
+    try:
+        stock = twstock.Stock(str(sid))
+        data = stock.fetch_3mo() 
+        df = pd.DataFrame(data)
+        if not df.empty:
+            df = df.set_index('date')
+            df.columns = ['Capacity', 'Turnover', 'Open', 'High', 'Low', 'Close', 'Change', 'Transaction']
+            # 確保欄位為數值型態
+            for col in ['Open', 'High', 'Low', 'Close']:
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+            return df
+    except:
+        return pd.DataFrame()
     return pd.DataFrame()
 
 # =========================
-# 資料抓取與處理函數
+# 資料抓取函數 (TWSE)
 # =========================
 def get_day(date):
     url = f"https://www.twse.com.tw/rwd/zh/fund/TWT44U?date={date}&response=json"
@@ -78,7 +83,7 @@ def find(df, keys):
 if st.button("開始 V9.2"):
     df = load(30)
     if df.empty:
-        st.error("沒有抓到資料，請確認網路連線。")
+        st.error("沒有抓到資料")
         st.stop()
 
     stock_col = find(df, ["證券代號"])
@@ -94,60 +99,38 @@ if st.button("開始 V9.2"):
             last3, last10 = series[-3:], series[-10:]
             last3_sum, last10_sum = last3.sum(), last10.sum()
             if (last3 < 0).sum() >= 2 or last10_sum <= 0 or abs(last10_sum) < 20: continue
-            
-            result.append({
-                "股票": stock, 
-                "強度": round(last3_sum / (abs(last10_sum) + 1), 4), 
-                "穩定度": round(last10_sum / (abs(last3_sum) + 1), 4)
-            })
+            result.append({"股票": stock, "強度": round(last3_sum / (abs(last10_sum) + 1), 4)})
         except: continue
 
     out = pd.DataFrame(result)
     if out.empty:
-        st.warning("目前市場沒有明顯投信鎖碼（偏整理盤）")
+        st.warning("目前市場沒有明顯投信鎖碼")
         st.stop()
-
     out = out.sort_values("強度", ascending=False)
     st.success(f"完成：{len(out)} 檔")
     st.dataframe(out)
     st.session_state['final_out'] = out
 
 # =========================
-# 轉折圖監測器
+# 轉折圖分析
 # =========================
 if 'final_out' in st.session_state:
     st.write("---")
     st.subheader("🎯 轉折監測器")
     final_out = st.session_state['final_out']
-    sel = st.selectbox("分析個股：", final_out["股票"].tolist())
+    # 確保選取的是字串代號
+    sel = st.selectbox("分析個股：", final_out["股票"].astype(str).tolist())
     
-    ticker = f"{sel}.TW"
-    
-    df_k = get_stock_data_with_retry(ticker)
+    df_k = get_twstock_data(sel)
     
     if not df_k.empty:
-        if isinstance(df_k.columns, pd.MultiIndex): 
-            df_k.columns = df_k.columns.get_level_values(0)
-        
         df_k['5MA'] = df_k['Close'].rolling(5).mean()
         df_k['10MA'] = df_k['Close'].rolling(10).mean()
         df_k['20MA'] = df_k['Close'].rolling(20).mean()
         
-        l = df_k.iloc[-1]
-        st.markdown(f"""
-            <div style="background-color: #f8f9fa; padding: 15px; border-radius: 8px; border-left: 5px solid #6c757d; font-family: monospace;">
-                <b>{sel} 技術指標：</b><br>
-                5MA: {l['5MA']:.2f} | 10MA: {l['10MA']:.2f} | 20MA: {l['20MA']:.2f}
-            </div>
-        """, unsafe_allow_html=True)
-        
+        # 繪圖
         fig, axlist = mpf.plot(df_k.iloc[-90:], type='candle', returnfig=True, volume=True, figsize=(10, 6), 
                                addplot=[mpf.make_addplot(df_k[m].iloc[-90:], color=c) for m, c in zip(['5MA','10MA','20MA'], ['orange','blue','purple'])])
-        
-        ax = axlist[0]
-        for idx, val, lbl in get_zigzag_points(df_k):
-            if idx in df_k.iloc[-90:].index:
-                ax.annotate(lbl, (df_k.index.get_loc(idx), val), ha='center', color='red' if lbl=='H' else 'green', weight='bold')
         st.pyplot(fig)
     else:
-        st.error(f"無法取得 {ticker} 的資料。Yahoo Finance 請求被限制，請稍候重試或重新整理頁面。")
+        st.error(f"無法取得 {sel} 的歷史資料，請確認該代號是否正確。")
