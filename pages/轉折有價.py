@@ -70,9 +70,9 @@ if stock_code:
 
         # 4. 繪圖
         mc = mpf.make_marketcolors(up='red', down='green', edge='inherit', wick='inherit', volume='in')
-        s = mpf.make_mpf_style(marketcolors=mc, gridstyle='--')
+        s = mpf.make_mpf_style(marketcolors=mc, blue='--')
         ap = [mpf.make_addplot(df['5MA'], color='orange'),
-              mpf.make_addplot(df['10MA'], color='blue'),
+              mpf.make_addplot(df['10MA'], color='gridstyle'),
               mpf.make_addplot(df['20MA'], color='purple')]
         
         fig, axlist = mpf.plot(df, type='candle', style=s, addplot=ap, returnfig=True, figsize=(12, 7), volume=True, panel_ratios=(3, 1))
