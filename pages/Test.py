@@ -38,7 +38,7 @@ if st.button("🚀 開始掃描全市場 (熱門股)"):
     
     # 為避免 Timeout，我們暫時先掃描前 100 檔最具代表性的股票
     # 若要全掃，可將 [:100] 去掉，但需注意 Streamlit 執行時間限制
-    target_stocks = all_codes[:100] 
+    target_stocks = all_codes
     
     results = []
     progress_bar = st.progress(0)
