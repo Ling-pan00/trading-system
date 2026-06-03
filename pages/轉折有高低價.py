@@ -9,7 +9,6 @@ from datetime import datetime, timedelta
 st.set_page_config(page_title="5MA 轉折波段系統", layout="wide")
 st.title("📈 5MA 轉折波段自動標註系統")
 
-# 使用者輸入
 stock_code = st.text_input("請輸入台灣股票代號 (例如: 2330):", "4768")
 end_date = (datetime.today() + timedelta(days=1)).strftime('%Y-%m-%d')
 start_date = (datetime.today() - timedelta(days=180)).strftime('%Y-%m-%d')
@@ -36,44 +35,44 @@ if stock_code:
         df['10MA'] = df['Close'].rolling(window=10).mean()
         df['20MA'] = df['Close'].rolling(window=20).mean()
         
-        # 2. 轉折偵測邏輯
-        # Cross = 1: 站上(觸發底), Cross = -1: 跌破(觸發頭)
+        # 2. 轉折邏輯 (維持先前邏輯)
         df['Cross'] = 0 
         df.loc[(df['Close'] < df['5MA']) & (df['Close'].shift(1) >= df['5MA'].shift(1)), 'Cross'] = -1
         df.loc[(df['Close'] > df['5MA']) & (df['Close'].shift(1) <= df['5MA'].shift(1)), 'Cross'] = 1
         
-        labels = {} # 存放標註點
+        labels = {} 
         last_idx = 0
-        
         for idx in df.index[df['Cross'] != 0]:
-            # 含當日往回找區間
             segment = df.loc[df.index[last_idx] : idx]
-            if df.loc[idx, 'Cross'] == -1: # 跌破，找前一波段最高
+            if df.loc[idx, 'Cross'] == -1:
                 peak_idx = segment['High'].idxmax()
                 labels[peak_idx] = ('H', df.loc[peak_idx, 'High'])
-            else: # 站上，找前一波段最低
+            else:
                 valley_idx = segment['Low'].idxmin()
                 labels[valley_idx] = ('B', df.loc[valley_idx, 'Low'])
             last_idx = df.index.get_loc(idx)
 
-        # 3. 均線與趨勢顯示
+        # 3. 均線與趨勢顯示 (補回)
         def get_trend(col): return "▲" if df[col].iloc[-1] >= df[col].iloc[-2] else "▼"
         st.markdown(f"""
-            <div style="background-color: #f8f9fa; padding: 10px 15px; border-radius: 5px; margin-bottom: 10px; font-family: monospace; font-weight: bold; border-left: 5px solid #6c757d;">
+            <div style="background-color: #f8f9fa; padding: 10px; border-radius: 5px; font-family: monospace; font-weight: bold; border-left: 5px solid #6c757d;">
                 5MA: {df['5MA'].iloc[-1]:.2f} {get_trend('5MA')} | 
                 10MA: {df['10MA'].iloc[-1]:.2f} {get_trend('10MA')} | 
                 月線: {df['20MA'].iloc[-1]:.2f} {get_trend('20MA')}
             </div>
         """, unsafe_allow_html=True)
 
-        # 4. 繪圖
-        plots = [mpf.make_addplot(df[ma], color=c) for ma, c in zip(['5MA', '10MA', '20MA'], ['orange', 'blue', 'purple'])]
-        fig, axlist = mpf.plot(df, type='candle', addplot=plots, returnfig=True, figsize=(12, 7), 
-                               panel_ratios=(3, 1), volume=True)
-        main_ax, volume_ax = axlist[0], axlist[2]
+        # 4. 繪圖 (修復顏色設定與成交量顯示)
+        mc = mpf.make_marketcolors(up='red', down='green', volume='in')
+        s = mpf.make_mpf_style(marketcolors=mc, gridstyle='--')
         
-        # Y軸靠右
-        for ax in [main_ax, volume_ax]:
+        plots = [mpf.make_addplot(df[ma], color=c) for ma, c in zip(['5MA', '10MA', '20MA'], ['orange', 'blue', 'purple'])]
+        
+        fig, axlist = mpf.plot(df, type='candle', style=s, addplot=plots, returnfig=True, figsize=(12, 7), 
+                               panel_ratios=(3, 1), volume=True)
+        
+        # Y軸靠右並修復成交量刻度
+        for ax in [axlist[0], axlist[2]]:
             ax.yaxis.tick_right()
             ax.yaxis.set_label_position("right")
         
@@ -83,17 +82,15 @@ if stock_code:
             x = df.index.get_loc(idx)
             points.append((x, val))
             color = "red" if label == "H" else "green"
-            # 圓圈字母
-            main_ax.annotate(label, xy=(x, val), xytext=(0, 20 if label=='H' else -20), 
+            axlist[0].annotate(label, xy=(x, val), xytext=(0, 20 if label=='H' else -20), 
                              textcoords='offset points', ha='center', color='white', weight='bold',
                              bbox=dict(boxstyle="circle", fc=color, ec="none"))
-            # 數值圓角框
-            main_ax.annotate(f"{val:.2f}", xy=(x, val), xytext=(0, 45 if label=='H' else -45), 
+            axlist[0].annotate(f"{val:.2f}", xy=(x, val), xytext=(0, 45 if label=='H' else -45), 
                              textcoords='offset points', ha='center', color='white', weight='bold', fontsize=9,
                              bbox=dict(boxstyle="round,pad=0.3", fc=color, ec="none"))
             
         if len(points) > 1:
             px, py = zip(*points)
-            main_ax.plot(px, py, color='black', alpha=0.5, linewidth=1.5, zorder=3)
+            axlist[0].plot(px, py, color='black', alpha=0.5, linewidth=1.5, zorder=3)
 
         st.pyplot(fig)
