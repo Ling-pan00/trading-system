@@ -50,7 +50,7 @@ if stock_code:
             </div>
         """, unsafe_allow_html=True)
 
-        # 3. 波段邏輯 (包含當日)
+        # 3. 波段邏輯
         df['State'] = np.where(df['Close'] > df['5MA'], 1, -1)
         change_indices = df.index[df['State'] != df['State'].shift()].tolist()
         if df.index[-1] not in change_indices: change_indices.append(df.index[-1])
@@ -78,7 +78,7 @@ if stock_code:
         fig, axlist = mpf.plot(df, type='candle', style=s, addplot=ap, returnfig=True, figsize=(12, 7), volume=True, panel_ratios=(3, 1))
         
         main_ax = axlist[0]
-        main_ax.yaxis.tick_right() # Y軸靠右
+        main_ax.yaxis.tick_right()
         main_ax.yaxis.set_label_position("right")
         
         if len(zigzag_points) > 1:
@@ -89,10 +89,15 @@ if stock_code:
             x = df.index.get_loc(idx)
             is_h = row['Label'] == "H"
             val = row['High'] if is_h else row['Low']
-            main_ax.annotate(row['Label'], xy=(x, val), xytext=(0, 20 if is_h else -20),
-                             textcoords='offset points', ha='center', color='white', weight='bold',
-                             bbox=dict(boxstyle="circle", fc="red" if is_h else "green", ec="none"))
-            main_ax.annotate(f"{val:.2f}", xy=(x, val), xytext=(0, 45 if is_h else -45),
+            
+            # 標註 H 或 B (去除底色框，直接顯示彩色文字)
+            main_ax.annotate(row['Label'], xy=(x, val), xytext=(0, 15 if is_h else -25),
+                             textcoords='offset points', ha='center', color='red' if is_h else 'green', 
+                             weight='bold', fontsize=12)
+            
+            # 標註數值 (去除底色框)
+            main_ax.annotate(f"{val:.2f}", xy=(x, val), xytext=(0, 30 if is_h else -40),
                              textcoords='offset points', ha='center', weight='bold', fontsize=9,
-                             bbox=dict(boxstyle="round,pad=0.3", fc="red" if is_h else "green", ec="none", color='white'))
+                             color='red' if is_h else 'green')
+                             
         st.pyplot(fig)
