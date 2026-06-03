@@ -8,3 +8,4 @@ streamlit-echarts
 mplfinance
 numpy
 lxml
+scipy
