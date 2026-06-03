@@ -1,186 +1,114 @@
 import streamlit as st
 import pandas as pd
 import yfinance as yf
-import twstock
-import numpy as np
 import mplfinance as mpf
-import matplotlib.pyplot as plt
-from datetime import datetime, timedelta
+import numpy as np
+import twstock
 
+# --- 設定 ---
+st.set_page_config(page_title="三池強力監控系統 Pro", layout="wide")
+st.title("🚀 三池強力監控系統 Pro")
 
-#
+# --- 1. 核心資料處理函式 ---
+@st.cache_data(ttl=86400)
+def get_stock_list():
+    stocks = []
+    for code, info in twstock.codes.items():
+        if info.market in ["上市", "上櫃"] and len(code) == 4 and code.isdigit():
+            ticker = f"{code}.TW" if info.market == "上市" else f"{code}.TWO"
+            stocks.append({"code": code, "name": info.name, "ticker": ticker})
+    return stocks
 
-# ==========================================
-# 🎨 轉折 K 線圖繪製模組 (設定為 3 個月區間)
-# ==========================================
-def draw_zigzag_chart(ticker_code, stock_name):
-    """繪製 3 個月區間的 5MA 轉折波段圖"""
-    end_date = datetime.today().strftime('%Y-%m-%d')
-    start_date = (datetime.today() - timedelta(days=90)).strftime('%Y-%m-%d') # 精準 3 個月範圍
+def get_zigzag_points(df):
+    df_c = df.copy()
+    df_c['5MA'] = df_c['Close'].rolling(5).mean()
+    df_c['State'] = np.where(df_c['Close'] > df_c['5MA'], 1, -1)
+    df_c['Change'] = df_c['State'] != df_c['State'].shift()
+    points = []
+    for i in range(20, len(df_c)):
+        if df_c['Change'].iloc[i]:
+            segment = df_c.iloc[max(0, i-20):i]
+            idx = segment['High'].idxmax() if df_c['State'].iloc[i] == -1 else segment['Low'].idxmin()
+            lbl = "H" if df_c['State'].iloc[i] == -1 else "B"
+            points.append((idx, df_c.loc[idx, 'High'] if lbl=="H" else df_c.loc[idx, 'Low'], lbl))
+    return points
+
+# --- 2. 核心邏輯區 ---
+if "breakout" not in st.session_state: st.session_state.update({"breakout":pd.DataFrame(), "momentum":pd.DataFrame(), "pullback":pd.DataFrame()})
+tickers = [s["ticker"] for s in get_stock_list()]
+ticker_map = {s["ticker"]: s for s in get_stock_list()}
+
+if st.button("🚀 執行強力選股"):
+    results = []
+    with st.spinner("掃描市場動能中..."):
+        for t in tickers[:150]:
+            try:
+                df = yf.download(t, period="3mo", progress=False)
+                if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
+                if len(df) < 20: continue
+                c, ma5 = float(df["Close"].iloc[-1]), df["Close"].rolling(5).mean().iloc[-1]
+                vol_ma5, pct = df["Volume"].rolling(5).mean().iloc[-1], float((df["Close"].iloc[-1] - df["Close"].iloc[-2]) / df["Close"].iloc[-2] * 100)
+                s = (2 if c > ma5 else 0) + (3 if df["Volume"].iloc[-1] > vol_ma5 * 1.5 else 1) + (2 if pct > 2 else 0)
+                pool = "🚀 突破股" if s >= 7 else "🟡 動能股" if s >= 4 else "🧊 回檔股"
+                results.append({"代號": ticker_map[t]["code"], "名稱": ticker_map[t]["name"], "ticker": t, "分數": s, "池別": pool})
+            except: continue
+    if results:
+        df = pd.DataFrame(results)
+        for p, k in [("🚀 突破股", "breakout"), ("🟡 動能股", "momentum"), ("🧊 回檔股", "pullback")]:
+            st.session_state[k] = df[df["池別"] == p].sort_values("分數", ascending=False).head(5)
+
+# --- 3. 完整介面與監控 ---
+pools = {"🚀 突破股": "breakout", "🟡 動能股": "momentum", "🧊 回檔股": "pullback"}
+if any(not st.session_state[k].empty for k in pools.values()):
+    # 列表展示
+    cols = st.columns(3)
+    for i, (label, key) in enumerate(pools.items()):
+        cols[i].subheader(label)
+        if not st.session_state[key].empty: cols[i].dataframe(st.session_state[key][["代號", "名稱", "分數"]], use_container_width=True, hide_index=True)
     
-    df_chart = yf.download(ticker_code, start=start_date, end=end_date, progress=False)
+    # 盤中動能監控
+    st.write("---")
+    if st.button("🔄 更新監控訊號"):
+        for label, key in pools.items():
+            if st.session_state[key].empty: continue
+            st.write(f"**{label}**"); live = []
+            for _, row in st.session_state[key].iterrows():
+                try:
+                    d = yf.download(row["ticker"], period="5d", progress=False)
+                    if isinstance(d.columns, pd.MultiIndex): d.columns = d.columns.get_level_values(0)
+                    sig = "🟢 BUY" if d["Open"].iloc[-1] >= d["Close"].iloc[-2] else "🟡 WATCH"
+                    live.append({"代號": row["代號"], "訊號": sig})
+                except: continue
+            if live: st.dataframe(pd.DataFrame(live), use_container_width=True, hide_index=True)
+
+    # 轉折圖
+    st.write("---")
+    st.subheader("🎯 轉折監測器")
+    pool_all = pd.concat([st.session_state[k] for k in pools.values() if not st.session_state[k].empty]).drop_duplicates(subset=['ticker'])
+    sel = st.selectbox("分析個股：", pool_all["代號"].tolist())
+    ticker = pool_all[pool_all["代號"] == sel]["ticker"].values[0]
     
-    if df_chart.empty:
-        st.error(f"⚠️ 無法取得 {stock_name}({ticker_code}) 的圖表數據。")
-        return
-
-    # 處理 yfinance 多國資料庫結構
-    if isinstance(df_chart.columns, pd.MultiIndex):
-        df_chart.columns = df_chart.columns.get_level_values(0)
-
-    # 1. 計算均線
-    df_chart['5MA'] = df_chart['Close'].rolling(window=5).mean()
-    df_chart['10MA'] = df_chart['Close'].rolling(window=10).mean()
-    df_chart['20MA'] = df_chart['Close'].rolling(window=20).mean()
-
-    df_chart['Close'] = pd.to_numeric(df_chart['Close'], errors='coerce')
-    df_chart['High'] = pd.to_numeric(df_chart['High'], errors='coerce')
-    df_chart['Low'] = pd.to_numeric(df_chart['Low'], errors='coerce')
-
-    df_chart = df_chart.dropna(subset=['Close', '5MA', '20MA']).copy()
-
-    # 2. 轉折波段邏輯
-    df_chart['State'] = np.where(df_chart['Close'] > df_chart['5MA'], 1, -1)
-    df_chart['State_Group'] = (df_chart['State'] != df_chart['State'].shift()).cumsum()
-
-    zigzag_points = []
-    grouped = df_chart.groupby('State_Group')
-    group_ids = sorted(df_chart['State_Group'].unique())
-
-    for g_id in group_ids:
-        group_data = grouped.get_group(g_id)
-        state = group_data['State'].iloc[0]
-        if g_id <= 2: continue
-        if state == 1:
-            highest_idx = group_data['High'].idxmax()
-            zigzag_points.append((df_chart.index.get_loc(highest_idx), df_chart.loc[highest_idx, 'High']))
-            df_chart.loc[highest_idx, 'Label'] = "H"
-        else:
-            lowest_idx = group_data['Low'].idxmin()
-            zigzag_points.append((df_chart.index.get_loc(lowest_idx), df_chart.loc[lowest_idx, 'Low']))
-            df_chart.loc[lowest_idx, 'Label'] = "B"
-
-    # 3. 取得均線數據與箭頭
-    def get_ma_details(col_name):
-        now = df_chart[col_name].iloc[-1]
-        pre = df_chart[col_name].iloc[-2]
-        arrow = "▲" if now >= pre else "▼"
-        return f"{now:.2f} {arrow}"
-
-    st.markdown(f"#### 📈 {stock_name} ({ticker_code}) — 3個月 5MA 轉折波段圖")
+    df_k = yf.download(ticker, period="3mo", progress=False)
+    if isinstance(df_k.columns, pd.MultiIndex): df_k.columns = df_k.columns.get_level_values(0)
+    df_k['5MA'], df_k['10MA'], df_k['20MA'] = df_k['Close'].rolling(5).mean(), df_k['Close'].rolling(10).mean(), df_k['Close'].rolling(20).mean()
+    
+    # HTML 美觀看板
+    l, p = df_k.iloc[-1], df_k.iloc[-2]
     st.markdown(f"""
-        <div style="
-            background-color: #f8f9fa; 
-            padding: 10px 15px; 
-            border-radius: 5px; 
-            margin-top: 5px; 
-            margin-bottom: 10px; 
-            font-family: monospace; 
-            font-size: 15px; 
-            font-weight: bold;
-            border-left: 5px solid #6c757d;
-        ">
-            <span style="color: #FF9800; margin-right: 20px;">5MA: {get_ma_details('5MA')}</span>
-            <span style="color: #2196F3; margin-right: 20px;">10MA: {get_ma_details('10MA')}</span>
-            <span style="color: #9C27B0;">20MA: {get_ma_details('20MA')}</span>
+        <div style="background-color: #f8f9fa; padding: 15px; border-radius: 8px; border-left: 5px solid #6c757d; font-family: monospace; font-size: 16px; font-weight: bold;">
+            <span style="color: #FF9800; margin-right: 20px;">5MA: {l['5MA']:.2f} {'▲' if l['5MA'] > p['5MA'] else '▼'}</span>
+            <span style="color: #2196F3; margin-right: 20px;">10MA: {l['10MA']:.2f} {'▲' if l['10MA'] > p['10MA'] else '▼'}</span>
+            <span style="color: #9C27B0;">20MA: {l['20MA']:.2f} {'▲' if l['20MA'] > p['20MA'] else '▼'}</span>
         </div>
     """, unsafe_allow_html=True)
-
-    # 4. 繪製圖表
-    mc = mpf.make_marketcolors(up='red', down='green', edge='inherit', wick='inherit', volume='in')
-    s_style = mpf.make_mpf_style(marketcolors=mc, gridstyle='--')
-
-    plots = [
-        mpf.make_addplot(df_chart['5MA'], color='orange', width=1),
-        mpf.make_addplot(df_chart['10MA'], color='blue', width=1),
-        mpf.make_addplot(df_chart['20MA'], color='purple', width=1)
-    ]
-
-    fig, axlist = mpf.plot(
-        df_chart, type='candle', style=s_style, addplot=plots, 
-        returnfig=True, figsize=(12, 6), volume=True,
-        panel_ratios=(4,1)
-    )
     
-    main_ax = axlist[0]
-
-    # 5. 連接轉折線
-    if len(zigzag_points) > 1:
-        x_coords, y_coords = zip(*zigzag_points)
-        main_ax.plot(x_coords, y_coords, color='black', alpha=0.5, linewidth=1.5, zorder=3)
-
-    # 6. 標註 H/B
-    for idx, row in df_chart[df_chart['Label'].notnull()].iterrows():
-        x = df_chart.index.get_loc(idx)
-        is_h = row['Label'] == "H"
-        main_ax.text(x, row['High' if is_h else 'Low'], row['Label'],
-                    color='red' if is_h else 'green', weight='bold',
-                    ha='center', va='bottom' if is_h else 'top',
-                    bbox=dict(boxstyle="circle,pad=0.1", fc="yellow", ec="none", alpha=0.6))
-
+    # 繪圖
+    fig, axlist = mpf.plot(df_k.iloc[-90:], type='candle', returnfig=True, volume=True, figsize=(10, 6), 
+                           addplot=[mpf.make_addplot(df_k[m].iloc[-90:], color=c) for m, c in zip(['5MA','10MA','20MA'], ['orange','blue','purple'])])
+    ax = axlist[0]
+    for idx, val, lbl in get_zigzag_points(df_k):
+        if idx in df_k.iloc[-90:].index:
+            ax.annotate(lbl, (df_k.index.get_loc(idx), val), ha='center', color='red' if lbl=='H' else 'green', weight='bold', bbox=dict(fc="yellow", alpha=0.5))
     st.pyplot(fig)
-    plt.close
 
-# ==========================================
-# 📊 畫面渲染模組與【按鈕與下拉選單雙向聯動機制】
-# ==========================================
-for pool_name in ["🔴 第四池", "🔵 第三池", "🟠 第二池", "🟡 第一池"]:
-    if f"pool_{pool_name}" in st.session_state:
-        saved_df = st.session_state[f"pool_{pool_name}"]
-        st.subheader(f"📊 策略精選名單 - {pool_name}")
-        
-        if not saved_df.empty:
-            # 呈現給使用者看的前台表格
-            display_df = saved_df.drop(columns=["ticker"])
-            st.dataframe(display_df, use_container_width=True)
-            
-            # 生成股票選單選項 (與 DataFrame 索引完全對應)
-            stock_options = [f"{row['代號']} {row['名稱']}" for _, row in saved_df.iterrows()]
-            
-            # 初始化該池別的 index 狀態
-            if f"idx_{pool_name}" not in st.session_state:
-                st.session_state[f"idx_{pool_name}"] = 0
-                
-            current_idx = st.session_state[f"idx_{pool_name}"]
 
-            # 🛠️ 建立控制列：左按鈕、下拉選單、右按鈕
-            st.write(f"🔍 **切換檢視 K 線圖（共 {len(stock_options)} 檔）：**")
-            btn_col1, sel_col, btn_col2 = st.columns([1, 4, 1])
-            
-            with btn_col1:
-                # 點擊「上一檔」
-                if st.button("⏮️ 上一檔", key=f"prev_btn_{pool_name}", use_container_width=True):
-                    if current_idx > 0:
-                        st.session_state[f"idx_{pool_name}"] = current_idx - 1
-                        st.rerun()
-
-            with sel_col:
-                # 🔥【修復線】修正了外雙引號、內單引號的寫法，解決程式卡死問題
-                selected_stock = st.selectbox(
-                    f"選擇股票：", 
-                    stock_options, 
-                    index=st.session_state[f"idx_{pool_name}"],
-                    key=f"select_{pool_name}_v2_{st.session_state[f'idx_{pool_name}']}",
-                    label_visibility="collapsed"
-                )
-                # 如果使用者手動下拉選別檔，也要同步回狀態中
-                new_idx = stock_options.index(selected_stock)
-                if new_idx != current_idx:
-                    st.session_state[f"idx_{pool_name}"] = new_idx
-                    st.rerun()
-
-            with btn_col2:
-                # 點擊「下一檔」
-                if st.button("⏭️ 下一檔", key=f"next_btn_{pool_name}", use_container_width=True):
-                    if current_idx < len(stock_options) - 1:
-                        st.session_state[f"idx_{pool_name}"] = current_idx + 1
-                        st.rerun()
-            
-            # 依據最終確定的 index 撈出後台對應的正確 ticker 並繪圖
-            final_idx = st.session_state[f"idx_{pool_name}"]
-            target_row = saved_df.iloc[final_idx]
-            
-            # 繪製圖形
-            draw_zigzag_chart(target_row["ticker"], target_row["名稱"])
-        else:
-            st.info("此池目前無符合條件股票")
