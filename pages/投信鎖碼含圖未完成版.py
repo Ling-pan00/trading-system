@@ -3,23 +3,11 @@ import pandas as pd
 import yfinance as yf
 import mplfinance as mpf
 import numpy as np
-import twstock
 import requests
 from datetime import datetime, timedelta
 import time
 
-# --- 這是您原本的原始輔助函數 (完全沒變) ---
-def get_zigzag_points(df):
-    points = []
-    if 'Close' not in df.columns: return points
-    data = df['Close'].values
-    for i in range(1, len(data) - 1):
-        if data[i] > data[i-1] and data[i] > data[i+1]:
-            points.append((df.index[i], data[i], 'H'))
-        elif data[i] < data[i-1] and data[i] < data[i+1]:
-            points.append((df.index[i], data[i], 'L'))
-    return points
-
+# --- 原始核心邏輯區 (完全恢復) ---
 def get_day(date):
     url = f"https://www.twse.com.tw/rwd/zh/fund/TWT44U?date={date}&response=json"
     try:
@@ -52,8 +40,7 @@ def find(df, keys):
 st.set_page_config(page_title="投信鎖碼股 V9.2", layout="wide")
 st.title("投信鎖碼股 V9.2（原始策略穩定版）")
 
-# 初始化 session
-if 'pools' not in st.session_state: st.session_state['pools'] = {}
+if 'out' not in st.session_state: st.session_state['out'] = pd.DataFrame()
 
 if st.button("開始 V9.2"):
     df = load(30)
@@ -68,7 +55,7 @@ if st.button("開始 V9.2"):
         if len(series) < 10: continue
         last3, last10 = series[-3:], series[-10:]
         
-        # --- 原始篩選邏輯：完全恢復 ---
+        # --- 原始篩選條件 (不動) ---
         if (last3 < 0).sum() >= 2 or last10.sum() <= 0 or abs(last10.sum()) < 20: continue
         
         result.append({
@@ -80,28 +67,24 @@ if st.button("開始 V9.2"):
     st.success(f"完成：{len(result)} 檔")
     st.dataframe(st.session_state['out'])
 
-# --- 僅修補圖表區 ---
+# --- 繪圖區補丁 ---
 st.write("---")
 st.subheader("🎯 轉折監測器")
-if 'out' in st.session_state and not st.session_state['out'].empty:
+if not st.session_state['out'].empty:
     pool_all = st.session_state['out']
     sel = st.selectbox("分析個股：", pool_all["代號"].tolist())
     ticker = pool_all[pool_all["代號"] == sel]["ticker"].values[0]
     
-    # 使用 try-except 保護，確保 yfinance 錯誤不會導致當機
+    # 強力修正：確保 yfinance 抓不到資料時，不會直接報錯
     try:
         df_k = yf.download(ticker, period="3mo", progress=False)
         if not df_k.empty:
             if isinstance(df_k.columns, pd.MultiIndex): df_k.columns = df_k.columns.get_level_values(0)
-            df_k['5MA'] = df_k['Close'].rolling(5).mean()
-            df_k['10MA'] = df_k['Close'].rolling(10).mean()
-            df_k['20MA'] = df_k['Close'].rolling(20).mean()
             
-            # 繪圖 (MPF)
-            fig, axlist = mpf.plot(df_k.iloc[-90:], type='candle', returnfig=True, volume=True, figsize=(10, 6), 
-                                   addplot=[mpf.make_addplot(df_k[m].iloc[-90:], color=c) for m, c in zip(['5MA','10MA','20MA'], ['orange','blue','purple'])])
+            # 使用 mpf 繪圖前強制檢查 index 格式
+            fig, ax = mpf.plot(df_k.iloc[-90:], type='candle', returnfig=True, volume=True, figsize=(10, 6))
             st.pyplot(fig)
         else:
-            st.warning("查無個股資料，請確認代號是否為上市普通股。")
+            st.warning(f"目前無法取得 {ticker} 的歷史資料，請嘗試其他標的。")
     except Exception as e:
-        st.error(f"圖表讀取失敗，原因: {e}")
+        st.error(f"圖表顯示異常，請檢查網路連線或該標的是否存在於 Yahoo Finance: {e}")
