@@ -5,11 +5,10 @@ import time
 import yfinance as yf
 import mplfinance as mpf
 import matplotlib.pyplot as plt
-import numpy as np
 from datetime import datetime, timedelta
 
 # ==========================================================
-# 1. 您的原始篩選邏輯 (保持原樣，確保篩選正確)
+# 1. 您的原始篩選策略 (完全保留)
 # ==========================================================
 def get_day(date):
     url = f"https://www.twse.com.tw/rwd/zh/fund/TWT44U?date={date}&response=json"
@@ -43,32 +42,38 @@ def find(df, keys):
     return None
 
 # ==========================================================
-# 2. 獨立繪圖模組 (解決了串接時型態不符的問題)
+# 2. 獨立繪圖函式 (專門解決無法抓取資料的問題)
 # ==========================================================
 def draw_chart(stock_id):
-    # 手動加上後綴，解決 yfinance 找不到資料的問題
-    ticker = f"{stock_id}.TW" if int(stock_id) < 2000 else f"{stock_id}.TWO"
-    
-    # 取得資料
-    df = yf.download(ticker, period="3mo", progress=False)
-    
-    if df.empty:
-        st.error(f"無法取得 {stock_id} 資料")
-        return
+    # 自動補上 .TW 或 .TWO，這是 yfinance 的強制規定
+    try:
+        code_str = str(stock_id).strip()
+        ticker = f"{code_str}.TW" if int(code_str) < 2000 else f"{code_str}.TWO"
+        
+        # 抓取最近 3 個月資料
+        df = yf.download(ticker, period="3mo", progress=False)
+        
+        if df.empty:
+            st.error(f"⚠️ 無法取得 {stock_id} ({ticker}) 的數據，請檢查代號。")
+            return
 
-    # 確保資料為數值格式 (解決您的 ValueError)
-    for col in df.columns:
-        df[col] = pd.to_numeric(df[col], errors='coerce')
-    df = df.dropna()
+        # 確保所有數據為數值，防止繪圖崩潰
+        for col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+        df = df.dropna()
 
-    # 簡單繪圖 (您可以將這裡換回您原本的複雜畫圖邏輯)
-    fig, ax = mpf.plot(df, type='candle', volume=True, returnfig=True)
-    st.pyplot(fig)
-    plt.close(fig)
+        # 繪圖
+        fig, ax = mpf.plot(df, type='candle', volume=True, returnfig=True, figsize=(10, 6))
+        st.pyplot(fig)
+        plt.close(fig)
+    except Exception as e:
+        st.error(f"繪圖發生錯誤: {e}")
 
 # ==========================================================
-# 3. 整合執行區 (完全隔絕策略與繪圖)
+# 3. 整合執行
 # ==========================================================
+st.title("投信鎖碼股 V9.2 (已修正繪圖串接)")
+
 if st.button("開始 V9.2"):
     df = load(30)
     stock_col = find(df, ["證券代號"])
@@ -85,8 +90,10 @@ if st.button("開始 V9.2"):
     out = pd.DataFrame(result)
     st.dataframe(out)
 
-    # 串接繪圖：選單只負責傳遞代號
+    # 串接：透過 selectbox 傳遞代號給 draw_chart，徹底隔絕資料污染
     if not out.empty:
         selected_stock = st.selectbox("選擇股票看轉折圖:", out['股票'].unique())
         if selected_stock:
             draw_chart(selected_stock)
+    else:
+        st.warning("目前無符合條件之標的。")
