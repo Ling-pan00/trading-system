@@ -9,11 +9,12 @@ from datetime import datetime, timedelta
 st.set_page_config(page_title="日股技術分析系統", layout="wide")
 st.title("📈 技術分析波段自動標註系統")
 
-# 數據下載函式
+# 1. 數據下載函式
 @st.cache_data
 def load_data(ticker):
     end_date = (datetime.today() + timedelta(days=1)).strftime('%Y-%m-%d')
     start_date = (datetime.today() - timedelta(days=180)).strftime('%Y-%m-%d')
+    # 嘗試不同的代號後綴
     suffixes = ["", ".T", ".JP", ".TW", ".TWO"]
     for s in suffixes:
         test_ticker = f"{ticker}{s}" if s != "" else ticker
@@ -22,7 +23,7 @@ def load_data(ticker):
             return df, test_ticker
     return pd.DataFrame(), None
 
-# 輸入區
+# 2. UI 輸入區
 ticker_input = st.text_input("請輸入股票代號 (例如 4099, 6787, 6227):", "4099")
 
 if ticker_input:
@@ -52,7 +53,7 @@ if ticker_input:
         </div>
         """, unsafe_allow_html=True)
 
-        # 波段邏輯 (ZigZag)
+        # 3. 波段邏輯 (ZigZag)
         df['State'] = np.where(df['Close'] > df['5MA'], 1, -1)
         change_indices = df.index[df['State'] != df['State'].shift()].tolist()
         if df.index[-1] not in change_indices: change_indices.append(df.index[-1])
@@ -70,7 +71,7 @@ if ticker_input:
                 df.at[idx, 'Label'] = "B"
                 zigzag_points.append((df.index.get_loc(idx), df.loc[idx, 'Low']))
 
-        # 繪圖
+        # 4. 繪圖
         mc = mpf.make_marketcolors(up='red', down='green', edge='inherit', wick='inherit', volume='in')
         s = mpf.make_mpf_style(marketcolors=mc, gridstyle='--', y_on_right=True)
         ap = [mpf.make_addplot(df['5MA'], color='orange'),
@@ -80,28 +81,29 @@ if ticker_input:
         fig, axlist = mpf.plot(df, type='candle', style=s, addplot=ap, returnfig=True, figsize=(12, 7), volume=True)
         
         main_ax = axlist[0]
+        # 繪製 ZigZag 線
         if len(zigzag_points) > 1:
             x, y = zip(*zigzag_points)
             main_ax.plot(x, y, color='black', alpha=0.5, linewidth=1.5, zorder=3)
         
-        # 標註 H/B 與數值 (調整偏移量以適應高價位)
+        # 標註 H/B 與數值 (已調整為離圖更近)
         for idx, row in df[df['Label'].notnull()].iterrows():
             x_idx = df.index.get_loc(idx)
             is_h = (row['Label'] == "H")
             val = row['High'] if is_h else row['Low']
             
-            # 使用較大的垂直偏移量
-            v_offset = 40 if is_h else -50
+            # 設定更緊湊的偏移量
+            v_offset = 20 if is_h else -25 
             
             # 標註 H 或 B
             main_ax.annotate(row['Label'], xy=(x_idx, val), xytext=(0, v_offset),
                              textcoords='offset points', ha='center', 
-                             color='red' if is_h else 'green', weight='bold', fontsize=12)
+                             color='red' if is_h else 'green', weight='bold', fontsize=10)
             
             # 標註數值
-            main_ax.annotate(f"{val:.0f}", xy=(x_idx, val), xytext=(0, v_offset + (20 if is_h else -20)),
+            main_ax.annotate(f"{val:.0f}", xy=(x_idx, val), xytext=(0, v_offset + (12 if is_h else -12)),
                              textcoords='offset points', ha='center', 
-                             color='red' if is_h else 'green', fontsize=9)
+                             color='red' if is_h else 'green', fontsize=8)
         
         st.pyplot(fig)
     else:
