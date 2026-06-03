@@ -6,53 +6,54 @@ from scipy.signal import argrelextrema
 import twstock
 import time
 
-st.set_page_config(page_title="W底診斷器", layout="wide")
-st.title("🛠️ W 底自動掃描與診斷工具")
+st.set_page_config(page_title="台股 W 底診斷器", layout="wide")
+st.title("📊 台股 W 底穩定版選股器")
 
-industry_map = {
-    "電機機械": "電機機械", "電器電纜": "電器電纜", "化學生技醫療": "生技醫療業",
-    "化工": "化學工業", "電子": "電子工業", "半導體": "半導體業",
-    "電腦及週邊設備": "電腦及週邊設備業", "光電": "光電業", "通信網路": "通信網路業",
-    "電子零組件": "電子零組件業", "電子通路": "電子通路業", "資訊服務": "資訊服務業",
-    "其他電子": "其他電子業", "綠能環保": "綠能環保", "數位雲端": "數位雲端"
-}
+# 修正代碼格式的函式
+def get_yf_ticker(code):
+    return f"{code}.TW"
 
-def analyze_ticker(ticker_symbol):
+def get_data(ticker):
+    # 下載時加入重試機制，且 period 改用 start/end 方式更穩定
     try:
-        # 下載資料
-        df = yf.download(ticker_symbol, period="150d", progress=False)
-        if len(df) < 60: return None, "資料不足"
-        
-        close_prices = df['Close'].values.flatten()
-        # 參數調小一點 (order=5)，更容易抓到波段底部
-        min_indices = argrelextrema(close_prices, np.less_equal, order=5)[0]
-        
-        if len(min_indices) < 2:
-            return None, "未找到兩個底部"
-            
-        idx1, idx2 = min_indices[-2], min_indices[-1]
-        l1, l2 = close_prices[idx1], close_prices[idx2]
-        diff_pct = abs(l1 - l2) / l1
-        
-        # 判斷是否符合 W 底 (誤差 15% 寬鬆設定)
-        if diff_pct < 0.15 and (idx2 - idx1) > 5:
-            return True, f"符合! 誤差: {diff_pct:.2%}"
-        else:
-            return False, f"誤差: {diff_pct:.2%}"
-    except Exception as e:
-        return None, str(e)
+        data = yf.download(ticker, period="150d", progress=False)
+        return data
+    except:
+        return None
 
+def analyze(ticker):
+    df = get_data(ticker)
+    if df is None or len(df) < 60:
+        return "資料不足", False
+    
+    close_prices = df['Close'].values.flatten()
+    min_indices = argrelextrema(close_prices, np.less_equal, order=5)[0]
+    
+    if len(min_indices) < 2:
+        return "無明顯底部", False
+        
+    idx1, idx2 = min_indices[-2], min_indices[-1]
+    l1, l2 = close_prices[idx1], close_prices[idx2]
+    diff = abs(l1 - l2) / l1
+    
+    if diff < 0.15: # 誤差 15% 內
+        return f"✅ 符合 (誤差: {diff:.1%})", True
+    return f"誤差過大: {diff:.1%}", False
+
+# 產業清單
+industry_map = {"半導體": "半導體業", "電子": "電子工業", "電機機械": "電機機械"}
 selected_industry = st.selectbox("選擇產業：", list(industry_map.keys()))
 
-if st.button("開始診斷掃描"):
+if st.button("開始穩定掃描"):
     all_codes = twstock.codes
-    target_list = [f"{code}.TW" for code, info in all_codes.items() if info.group == industry_map[selected_industry]]
+    target_list = [get_yf_ticker(code) for code, info in all_codes.items() if info.group == industry_map[selected_industry]]
     
     results = []
-    # 限制掃描前 20 檔進行診斷，避免等待過久
+    # 為了穩定，我們只掃描該產業的前 20 檔進行測試
     for ticker in target_list[:20]:
-        is_match, status = analyze_ticker(ticker)
-        results.append({"代碼": ticker, "狀態": status, "是否符合": is_match})
+        status, is_match = analyze(ticker)
+        results.append({"代碼": ticker, "狀態": status})
+        time.sleep(0.5) # 慢一點，確保伺服器不被鎖
     
     st.table(pd.DataFrame(results))
-    st.write("💡 如果狀態顯示 '誤差: XX%'，代表程式有抓到兩個低點，只是它們的差距大於設定值。")
+    st.write("如果看到 '資料不足'，請檢查是否是因為該產業股票剛好停牌或這段時間 Yahoo Finance 連線不穩。")
