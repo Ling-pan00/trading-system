@@ -25,7 +25,21 @@ def get_zigzag_points(df):
     return points
 
 # =========================
-# 資料載入函數
+# 強健的下載函數 (含重試)
+# =========================
+@st.cache_data(ttl=3600)
+def get_stock_data_with_retry(ticker, retries=3):
+    for i in range(retries):
+        try:
+            df = yf.download(ticker, period="3mo", progress=False, timeout=15, threads=True)
+            if not df.empty:
+                return df
+        except:
+            time.sleep(1)
+    return pd.DataFrame()
+
+# =========================
+# 資料抓取與處理函數
 # =========================
 def get_day(date):
     url = f"https://www.twse.com.tw/rwd/zh/fund/TWT44U?date={date}&response=json"
@@ -109,37 +123,31 @@ if 'final_out' in st.session_state:
     
     ticker = f"{sel}.TW"
     
-    try:
-        df_k = yf.download(ticker, period="3mo", progress=False, timeout=10)
+    df_k = get_stock_data_with_retry(ticker)
+    
+    if not df_k.empty:
+        if isinstance(df_k.columns, pd.MultiIndex): 
+            df_k.columns = df_k.columns.get_level_values(0)
         
-        if df_k is not None and not df_k.empty:
-            if isinstance(df_k.columns, pd.MultiIndex): 
-                df_k.columns = df_k.columns.get_level_values(0)
-            
-            # 計算均線
-            df_k['5MA'] = df_k['Close'].rolling(5).mean()
-            df_k['10MA'] = df_k['Close'].rolling(10).mean()
-            df_k['20MA'] = df_k['Close'].rolling(20).mean()
-            
-            # 技術看板
-            l = df_k.iloc[-1]
-            st.markdown(f"""
-                <div style="background-color: #f8f9fa; padding: 15px; border-radius: 8px; border-left: 5px solid #6c757d; font-family: monospace;">
-                    <b>{sel} 技術指標：</b><br>
-                    5MA: {l['5MA']:.2f} | 10MA: {l['10MA']:.2f} | 20MA: {l['20MA']:.2f}
-                </div>
-            """, unsafe_allow_html=True)
-            
-            # 繪圖
-            fig, axlist = mpf.plot(df_k.iloc[-90:], type='candle', returnfig=True, volume=True, figsize=(10, 6), 
-                                   addplot=[mpf.make_addplot(df_k[m].iloc[-90:], color=c) for m, c in zip(['5MA','10MA','20MA'], ['orange','blue','purple'])])
-            
-            ax = axlist[0]
-            for idx, val, lbl in get_zigzag_points(df_k):
-                if idx in df_k.iloc[-90:].index:
-                    ax.annotate(lbl, (df_k.index.get_loc(idx), val), ha='center', color='red' if lbl=='H' else 'green', weight='bold')
-            st.pyplot(fig)
-        else:
-            st.error(f"無法取得 {ticker} 的歷史價格，Yahoo Finance 可能限制了請求。請稍候重新整理。")
-    except Exception as e:
-        st.error(f"發生連線異常：{e}")
+        df_k['5MA'] = df_k['Close'].rolling(5).mean()
+        df_k['10MA'] = df_k['Close'].rolling(10).mean()
+        df_k['20MA'] = df_k['Close'].rolling(20).mean()
+        
+        l = df_k.iloc[-1]
+        st.markdown(f"""
+            <div style="background-color: #f8f9fa; padding: 15px; border-radius: 8px; border-left: 5px solid #6c757d; font-family: monospace;">
+                <b>{sel} 技術指標：</b><br>
+                5MA: {l['5MA']:.2f} | 10MA: {l['10MA']:.2f} | 20MA: {l['20MA']:.2f}
+            </div>
+        """, unsafe_allow_html=True)
+        
+        fig, axlist = mpf.plot(df_k.iloc[-90:], type='candle', returnfig=True, volume=True, figsize=(10, 6), 
+                               addplot=[mpf.make_addplot(df_k[m].iloc[-90:], color=c) for m, c in zip(['5MA','10MA','20MA'], ['orange','blue','purple'])])
+        
+        ax = axlist[0]
+        for idx, val, lbl in get_zigzag_points(df_k):
+            if idx in df_k.iloc[-90:].index:
+                ax.annotate(lbl, (df_k.index.get_loc(idx), val), ha='center', color='red' if lbl=='H' else 'green', weight='bold')
+        st.pyplot(fig)
+    else:
+        st.error(f"無法取得 {ticker} 的資料。Yahoo Finance 請求被限制，請稍候重試或重新整理頁面。")
