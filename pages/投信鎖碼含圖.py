@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 from datetime import datetime, timedelta
 
 # ==========================================================
-# 1. 您的原始篩選策略 (完全保留，不做任何更動)
+# 1. 您的原始篩選策略 (完全保留)
 # ==========================================================
 def get_day(date):
     url = f"https://www.twse.com.tw/rwd/zh/fund/TWT44U?date={date}&response=json"
@@ -52,25 +52,25 @@ def run_strategy():
     for stock, g in df.groupby(stock_col):
         g = g.sort_values("date")
         series = g[buy_col].values
-        # 您的原始邏輯 (已保留)
+        # 這是您確認沒問題的邏輯
         if len(series) < 10 or (series[-3:] < 0).sum() >= 2 or series[-10:].sum() <= 0: continue
         result.append({"股票": stock})
     return pd.DataFrame(result)
 
 # ==========================================================
-# 2. 獨立繪圖函式 (專門處理資料，解決型態衝突)
+# 2. 獨立繪圖區 (強制型態清洗，解決錯誤)
 # ==========================================================
 def draw_chart(stock_id):
     try:
-        # 強制補上後綴解決 yfinance 資料抓取失敗問題
+        # 強制補上後綴解決 yfinance 找不到資料問題
         ticker = f"{str(stock_id).strip()}.TW" if int(stock_id) < 2000 else f"{str(stock_id).strip()}.TWO"
         df = yf.download(ticker, period="3mo", progress=False)
         
         if df.empty:
-            st.error(f"⚠️ 無法取得 {stock_id} 資料")
+            st.error(f"⚠️ 無法取得 {stock_id} 數據")
             return
 
-        # 強制轉型，確保繪圖資料一定是 float，解決 ValueError
+        # --- 強制資料型態轉換，徹底解決 "must be ALL float or int" ---
         df = df.apply(pd.to_numeric, errors='coerce').dropna()
         
         # 繪圖
@@ -81,7 +81,7 @@ def draw_chart(stock_id):
         st.error(f"繪圖發生錯誤: {e}")
 
 # ==========================================================
-# 3. 整合執行 (純淨串接，徹底隔絕)
+# 3. 主程式串接
 # ==========================================================
 st.title("投信鎖碼股 V9.2")
 
@@ -89,7 +89,7 @@ if st.button("開始 V9.2"):
     out = run_strategy()
     if not out.empty:
         st.dataframe(out)
-        # 僅傳遞代號，不傳遞原始 DataFrame，徹底避免衝突
+        # 篩選出的股票作為選單選項
         sel = st.selectbox("選擇股票看轉折圖:", out['股票'].unique())
         if sel:
             draw_chart(sel)
