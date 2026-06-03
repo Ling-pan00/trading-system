@@ -35,7 +35,10 @@ if stock_code:
         df['10MA'] = df['Close'].rolling(window=10).mean()
         df['20MA'] = df['Close'].rolling(window=20).mean()
         
-        # 2. 轉折邏輯 (維持先前邏輯)
+        # 移除 NaN 確保繪圖對齊
+        df = df.dropna()
+        
+        # 2. 轉折邏輯
         df['Cross'] = 0 
         df.loc[(df['Close'] < df['5MA']) & (df['Close'].shift(1) >= df['5MA'].shift(1)), 'Cross'] = -1
         df.loc[(df['Close'] > df['5MA']) & (df['Close'].shift(1) <= df['5MA'].shift(1)), 'Cross'] = 1
@@ -52,7 +55,7 @@ if stock_code:
                 labels[valley_idx] = ('B', df.loc[valley_idx, 'Low'])
             last_idx = df.index.get_loc(idx)
 
-        # 3. 均線與趨勢顯示 (補回)
+        # 3. 均線與趨勢顯示
         def get_trend(col): return "▲" if df[col].iloc[-1] >= df[col].iloc[-2] else "▼"
         st.markdown(f"""
             <div style="background-color: #f8f9fa; padding: 10px; border-radius: 5px; font-family: monospace; font-weight: bold; border-left: 5px solid #6c757d;">
@@ -62,35 +65,43 @@ if stock_code:
             </div>
         """, unsafe_allow_html=True)
 
-        # 4. 繪圖 (修復顏色設定與成交量顯示)
+        # 4. 繪圖設定
         mc = mpf.make_marketcolors(up='red', down='green', volume='in')
         s = mpf.make_mpf_style(marketcolors=mc, gridstyle='--')
         
-        plots = [mpf.make_addplot(df[ma], color=c) for ma, c in zip(['5MA', '10MA', '20MA'], ['orange', 'blue', 'purple'])]
+        # 繪製均線
+        apds = [
+            mpf.make_addplot(df['5MA'], color='orange', width=1.5),
+            mpf.make_addplot(df['10MA'], color='blue', width=1.5),
+            mpf.make_addplot(df['20MA'], color='purple', width=1.5)
+        ]
         
-        fig, axlist = mpf.plot(df, type='candle', style=s, addplot=plots, returnfig=True, figsize=(12, 7), 
+        fig, axlist = mpf.plot(df, type='candle', style=s, addplot=apds, returnfig=True, figsize=(12, 7), 
                                panel_ratios=(3, 1), volume=True)
         
-        # Y軸靠右並修復成交量刻度
-        for ax in [axlist[0], axlist[2]]:
+        main_ax = axlist[0]
+        volume_ax = axlist[2]
+        
+        # 調整Y軸到右邊
+        for ax in [main_ax, volume_ax]:
             ax.yaxis.tick_right()
             ax.yaxis.set_label_position("right")
         
-        # 標註與連線
+        # 繪製標註與連線
         points = []
         for idx, (label, val) in labels.items():
             x = df.index.get_loc(idx)
             points.append((x, val))
             color = "red" if label == "H" else "green"
-            axlist[0].annotate(label, xy=(x, val), xytext=(0, 20 if label=='H' else -20), 
+            main_ax.annotate(label, xy=(x, val), xytext=(0, 20 if label=='H' else -20), 
                              textcoords='offset points', ha='center', color='white', weight='bold',
                              bbox=dict(boxstyle="circle", fc=color, ec="none"))
-            axlist[0].annotate(f"{val:.2f}", xy=(x, val), xytext=(0, 45 if label=='H' else -45), 
+            main_ax.annotate(f"{val:.2f}", xy=(x, val), xytext=(0, 45 if label=='H' else -45), 
                              textcoords='offset points', ha='center', color='white', weight='bold', fontsize=9,
                              bbox=dict(boxstyle="round,pad=0.3", fc=color, ec="none"))
             
         if len(points) > 1:
             px, py = zip(*points)
-            axlist[0].plot(px, py, color='black', alpha=0.5, linewidth=1.5, zorder=3)
+            main_ax.plot(px, py, color='black', alpha=0.5, linewidth=1.5, zorder=3)
 
         st.pyplot(fig)
