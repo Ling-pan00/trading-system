@@ -97,10 +97,11 @@ if stock_code:
             mpf.make_addplot(df['20MA'], color='purple', width=1)
         ]
 
+        # 調整 panel_ratios 為 (3, 1) 使成交量圖更大
         fig, axlist = mpf.plot(
             df, type='candle', style=s, addplot=plots, 
             returnfig=True, figsize=(12, 7), volume=True,
-            panel_ratios=(4,1)
+            panel_ratios=(3, 1)
         )
         
         main_ax = axlist[0]
@@ -110,7 +111,7 @@ if stock_code:
             x_coords, y_coords = zip(*zigzag_points)
             main_ax.plot(x_coords, y_coords, color='black', alpha=0.5, linewidth=1.5, zorder=3)
 
-        # 6. 標註 H/B 與價格數值 (調整為圖片樣式)
+        # 6. 標註 H/B 與價格數值
         for idx, row in df[df['Label'].notnull()].iterrows():
             x = df.index.get_loc(idx)
             is_h = row['Label'] == "H"
