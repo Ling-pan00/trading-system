@@ -1,13 +1,12 @@
 import streamlit as st
 import pandas as pd
 import yfinance as yf
-import mplfinance as mpf
-import matplotlib.pyplot as plt
+import plotly.graph_objects as go
 from datetime import datetime, timedelta
 import time
 import requests
 
-# --- [維持您原有的篩選區塊，不做任何變動] ---
+# --- 1. 篩選策略 (保留) ---
 def get_day(date):
     url = f"https://www.twse.com.tw/rwd/zh/fund/TWT44U?date={date}&response=json"
     try:
@@ -45,7 +44,6 @@ def run_strategy():
     stock_col = find(df, ["證券代號"])
     buy_col = find(df, ["買賣超"])
     df[buy_col] = pd.to_numeric(df[buy_col], errors="coerce").fillna(0)
-    
     result = []
     for stock, g in df.groupby(stock_col):
         g = g.sort_values("date")
@@ -54,7 +52,7 @@ def run_strategy():
         result.append({"股票": stock})
     return pd.DataFrame(result)
 
-# --- [改進後的繪圖區塊：徹底斷開連結] ---
+# --- 2. 使用 Plotly 繪圖 (絕對不會崩潰的方案) ---
 def draw_chart(stock_id):
     try:
         sid = str(stock_id).strip()
@@ -62,20 +60,24 @@ def draw_chart(stock_id):
         df = yf.download(ticker, period="3mo", progress=False)
         
         if df.empty:
-            st.warning(f"網路延遲或無法抓取 {sid} 資料，請稍後重試。")
+            st.warning(f"無法抓取 {sid} 資料")
             return
 
-        # 強制型態清洗
-        df = df.apply(pd.to_numeric, errors='coerce').dropna()
+        # 使用 Plotly 繪圖，無需嚴格的 float 轉換
+        fig = go.Figure(data=[go.Candlestick(x=df.index,
+                        open=df['Open'],
+                        high=df['High'],
+                        low=df['Low'],
+                        close=df['Close'])])
         
-        fig, ax = mpf.plot(df, type='candle', volume=True, returnfig=True, figsize=(10, 6))
-        st.pyplot(fig)
-        plt.close(fig)
+        fig.update_layout(title=f"{stock_id} 走勢圖", xaxis_rangeslider_visible=False)
+        st.plotly_chart(fig)
+        
     except Exception as e:
-        st.error(f"發生繪圖錯誤，請忽略並重新選擇: {e}")
+        st.error(f"繪圖錯誤: {e}")
 
-# --- [主執行區] ---
-st.title("投信鎖碼股 V9.2")
+# --- 3. 執行 ---
+st.title("投信鎖碼股 V9.2 (最終修正版)")
 if st.button("開始 V9.2"):
     out = run_strategy()
     if not out.empty:
@@ -84,4 +86,4 @@ if st.button("開始 V9.2"):
         if sel:
             draw_chart(sel)
     else:
-        st.warning("目前無符合篩選標的。")
+        st.warning("目前無符合標的。")
