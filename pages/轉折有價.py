@@ -45,8 +45,8 @@ if stock_code:
         st.markdown(f"""
             <div style="background-color: #f8f9fa; padding: 10px; border-radius: 5px; font-family: monospace; font-weight: bold; border-left: 5px solid #6c757d;">
                 <span style="color: #FF9800;">5MA: {get_ma_details('5MA')}</span> | 
-                <span style="color: #666666;">10MA: {get_ma_details('10MA')}</span> | 
-                <span style="color: #999999;">20MA: {get_ma_details('20MA')}</span>
+                <span style="color: #2196F3;">10MA: {get_ma_details('10MA')}</span> | 
+                <span style="color: #9C27B0;">20MA: {get_ma_details('20MA')}</span>
             </div>
         """, unsafe_allow_html=True)
 
@@ -71,11 +71,9 @@ if stock_code:
         # 4. 繪圖
         mc = mpf.make_marketcolors(up='red', down='green', edge='inherit', wick='inherit', volume='in')
         s = mpf.make_mpf_style(marketcolors=mc, gridstyle='--')
-        
-        # 均線顏色層次優化
-        ap = [mpf.make_addplot(df['5MA'], color='orange', linewidth=1.5),
-              mpf.make_addplot(df['10MA'], color='#666666', linewidth=1),
-              mpf.make_addplot(df['20MA'], color='#999999', linewidth=1)]
+        ap = [mpf.make_addplot(df['5MA'], color='orange'),
+              mpf.make_addplot(df['10MA'], color='blue'),
+              mpf.make_addplot(df['20MA'], color='purple')]
         
         fig, axlist = mpf.plot(df, type='candle', style=s, addplot=ap, returnfig=True, figsize=(12, 7), volume=True, panel_ratios=(3, 1))
         
@@ -83,22 +81,21 @@ if stock_code:
         main_ax.yaxis.tick_right()
         main_ax.yaxis.set_label_position("right")
         
-        # 趨勢線改為深灰色虛線，降低視覺干擾
         if len(zigzag_points) > 1:
             x, y = zip(*zigzag_points)
-            main_ax.plot(x, y, color='#444444', linestyle='--', alpha=0.7, linewidth=1.2, zorder=3)
+            main_ax.plot(x, y, color='black', alpha=0.5, linewidth=1.5, zorder=3)
             
         for idx, row in df[df['Label'].notnull()].iterrows():
             x = df.index.get_loc(idx)
             is_h = row['Label'] == "H"
             val = row['High'] if is_h else row['Low']
             
-            # 標註 H/B (彩色文字)
+            # 標註 H 或 B (去除底色框，直接顯示彩色文字)
             main_ax.annotate(row['Label'], xy=(x, val), xytext=(0, 15 if is_h else -25),
                              textcoords='offset points', ha='center', color='red' if is_h else 'green', 
                              weight='bold', fontsize=12)
             
-            # 標註數值
+            # 標註數值 (去除底色框)
             main_ax.annotate(f"{val:.2f}", xy=(x, val), xytext=(0, 30 if is_h else -40),
                              textcoords='offset points', ha='center', weight='bold', fontsize=9,
                              color='red' if is_h else 'green')
