@@ -7,8 +7,7 @@ import mplfinance as mpf
 import concurrent.futures
 from datetime import datetime, timedelta
 
-# --- 1. 選股器核心邏輯 ---
-@st.cache_data(ttl=3600)
+# --- 1. 篩選邏輯 ---
 def get_stock_df_twstock(code):
     try:
         stock = twstock.Stock(code)
@@ -25,11 +24,22 @@ def analyze_w_bottom(code):
     if close[-1] < ma20: return None
     min_price = min(close[-20:])
     avg_vol = np.mean(volume[-20:])
-    if abs(close[-1] - min_price) / min_price < 0.05 and volume[-1] > (avg_vol * 1.2):
-        return True
-    return None
+    return abs(close[-1] - min_price) / min_price < 0.05 and volume[-1] > (avg_vol * 1.2)
 
-# --- 2. 波段繪圖邏輯 ---
+def analyze_saucer_bottom(code):
+    df = get_stock_df_twstock(code)
+    if df is None: return None
+    close, volume = df['close'].values, df['capacity'].values
+    ma20 = np.mean(close[-20:])
+    if close[-1] < ma20: return None
+    mid = len(close) // 2
+    left_side, right_side = np.mean(close[:10]), np.mean(close[-10:])
+    if right_side <= left_side: return None
+    bottom_vol = np.mean(volume[mid-5 : mid+5])
+    side_vol = np.mean(np.concatenate([volume[:5], volume[-5:]]))
+    return bottom_vol < side_vol * 0.4
+
+# --- 2. 繪圖邏輯 ---
 @st.cache_data
 def get_yfinance_data(stock_code):
     end_date = (datetime.today() + timedelta(days=1)).strftime('%Y-%m-%d')
@@ -40,12 +50,13 @@ def get_yfinance_data(stock_code):
     return None
 
 def plot_zigzag_chart(df):
+    df = df.copy()
     df['5MA'] = df['Close'].rolling(5).mean()
     df['10MA'] = df['Close'].rolling(10).mean()
     df['20MA'] = df['Close'].rolling(20).mean()
     df = df.dropna().copy()
-    
     df['State'] = np.where(df['Close'] > df['5MA'], 1, -1)
+    
     change_indices = df.index[df['State'] != df['State'].shift()].tolist()
     if df.index[-1] not in change_indices: change_indices.append(df.index[-1])
     
@@ -68,7 +79,7 @@ def plot_zigzag_chart(df):
           mpf.make_addplot(df['10MA'], color='black', width=0.8),
           mpf.make_addplot(df['20MA'], color='purple', width=0.8)]
     
-    fig, axlist = mpf.plot(df, type='candle', style=s, addplot=ap, returnfig=True, figsize=(12, 7), volume=True)
+    fig, axlist = mpf.plot(df, type='candle', style=s, addplot=ap, returnfig=True, figsize=(10, 6), volume=True)
     main_ax = axlist[0]
     if len(zigzag_points) > 1:
         x, y = zip(*zigzag_points)
@@ -79,20 +90,25 @@ def plot_zigzag_chart(df):
         main_ax.annotate(row['Label'], xy=(x, val), xytext=(0, 15 if row['Label'] == "H" else -25), textcoords='offset points', ha='center', color='red' if row['Label'] == "H" else 'green', weight='bold')
     return fig
 
-# --- 3. UI 介面 ---
+# --- 3. UI ---
 st.title("📈 底部選股 + 5MA 轉折分析系統")
-selected_industry = st.selectbox("請選擇產業：", ["半導體業", "光電業", "電子零組件業"]) # 可自行擴充
+strategy = st.radio("選擇策略：", ["W 底模式", "碗形底模式"])
+selected_industry = st.selectbox("請選擇產業：", ["半導體業", "光電業", "電子零組件業"])
+
 if st.button("🚀 開始掃描"):
     target_list = [code for code, info in twstock.codes.items() if info.group == selected_industry]
+    analyze_func = analyze_w_bottom if strategy == "W 底模式" else analyze_saucer_bottom
     found = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
-        for code, result in zip(target_list, executor.map(analyze_w_bottom, target_list)):
-            if result: found.append(code)
+    with st.spinner('掃描中...'):
+        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+            future_map = {executor.submit(analyze_func, c): c for c in target_list}
+            for future in concurrent.futures.as_completed(future_map):
+                if future.result(): found.append(future_map[future])
     
     if found:
-        st.success(f"找到 {len(found)} 檔符合標的")
         selected_code = st.selectbox("選擇要查看的股票：", found)
         df_chart = get_yfinance_data(selected_code)
-        if df_chart is not None:
+        if df_chart is not None and not df_chart.empty:
             st.pyplot(plot_zigzag_chart(df_chart))
+        else: st.error("數據下載失敗")
     else: st.info("無符合標的")
