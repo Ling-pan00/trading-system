@@ -37,7 +37,7 @@ if stock_code:
         df['20MA'] = df['Close'].rolling(20).mean()
         df = df.dropna(subset=['Close', '5MA', '10MA', '20MA']).copy()
 
-        # 2. 顯示均線數值列
+        # 2. 顯示均線數值列 (更新顏色對應)
         def get_ma_details(col):
             now, pre = df[col].iloc[-1], df[col].iloc[-2]
             return f"{now:.2f} {'▲' if now >= pre else '▼'}"
@@ -45,7 +45,7 @@ if stock_code:
         st.markdown(f"""
             <div style="background-color: #f8f9fa; padding: 10px; border-radius: 5px; font-family: monospace; font-weight: bold; border-left: 5px solid #6c757d;">
                 <span style="color: #FF9800;">5MA: {get_ma_details('5MA')}</span> | 
-                <span style="color: #2196F3;">10MA: {get_ma_details('10MA')}</span> | 
+                <span style="color: #000000;">10MA: {get_ma_details('10MA')}</span> | 
                 <span style="color: #9C27B0;">20MA: {get_ma_details('20MA')}</span>
             </div>
         """, unsafe_allow_html=True)
@@ -68,13 +68,14 @@ if stock_code:
                 df.at[idx, 'Label'] = "B"
                 zigzag_points.append((df.index.get_loc(idx), df.loc[idx, 'Low']))
 
-        # 4. 繪圖 (均線統一為實線並調細)
+        # 4. 繪圖
         mc = mpf.make_marketcolors(up='red', down='green', edge='inherit', wick='inherit', volume='in')
         s = mpf.make_mpf_style(marketcolors=mc, gridstyle='--')
         
+        # 10MA 改為黑色，其他均線保持
         ap = [
             mpf.make_addplot(df['5MA'], color='orange', width=0.8),
-            mpf.make_addplot(df['10MA'], color='blue', width=0.8),
+            mpf.make_addplot(df['10MA'], color='black', width=0.8),
             mpf.make_addplot(df['20MA'], color='purple', width=0.8)
         ]
         
@@ -84,9 +85,10 @@ if stock_code:
         main_ax.yaxis.tick_right()
         main_ax.yaxis.set_label_position("right")
         
+        # 趨勢線(Zigzag)改為深藍色 (原 10MA 顏色)
         if len(zigzag_points) > 1:
             x, y = zip(*zigzag_points)
-            main_ax.plot(x, y, color='black', alpha=0.5, linewidth=1.5, zorder=3)
+            main_ax.plot(x, y, color='#2196F3', alpha=0.7, linewidth=1.5, zorder=3)
             
         for idx, row in df[df['Label'].notnull()].iterrows():
             x = df.index.get_loc(idx)
