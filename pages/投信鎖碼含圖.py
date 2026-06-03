@@ -11,9 +11,9 @@ st.set_page_config(page_title="投信鎖碼股 V9.2", layout="wide")
 st.title("投信鎖碼股 V9.2（平衡實戰版）")
 
 # =========================
-# 輔助：轉折點計算函數
+# 核心函數：轉折點計算
 # =========================
-def get_zigzag_points(df, pct=0.05):
+def get_zigzag_points(df):
     points = []
     if 'Close' not in df.columns: return points
     data = df['Close'].values
@@ -25,7 +25,7 @@ def get_zigzag_points(df, pct=0.05):
     return points
 
 # =========================
-# 資料抓取與處理函數
+# 資料載入函數
 # =========================
 def get_day(date):
     url = f"https://www.twse.com.tw/rwd/zh/fund/TWT44U?date={date}&response=json"
@@ -59,12 +59,12 @@ def find(df, keys):
     return None
 
 # =========================
-# 主程式
+# 主邏輯：選股核心
 # =========================
 if st.button("開始 V9.2"):
     df = load(30)
     if df.empty:
-        st.error("沒有抓到資料")
+        st.error("沒有抓到資料，請確認網路連線。")
         st.stop()
 
     stock_col = find(df, ["證券代號"])
@@ -90,7 +90,7 @@ if st.button("開始 V9.2"):
 
     out = pd.DataFrame(result)
     if out.empty:
-        st.warning("目前市場沒有明顯投信鎖碼")
+        st.warning("目前市場沒有明顯投信鎖碼（偏整理盤）")
         st.stop()
 
     out = out.sort_values("強度", ascending=False)
@@ -99,7 +99,7 @@ if st.button("開始 V9.2"):
     st.session_state['final_out'] = out
 
 # =========================
-# 轉折圖分析 (加入了錯誤處理)
+# 轉折圖監測器
 # =========================
 if 'final_out' in st.session_state:
     st.write("---")
@@ -108,31 +108,38 @@ if 'final_out' in st.session_state:
     sel = st.selectbox("分析個股：", final_out["股票"].tolist())
     
     ticker = f"{sel}.TW"
-    df_k = yf.download(ticker, period="3mo", progress=False)
     
-    # 增加資料有效性檢查
-    if df_k is not None and not df_k.empty:
-        if isinstance(df_k.columns, pd.MultiIndex): 
-            df_k.columns = df_k.columns.get_level_values(0)
+    try:
+        df_k = yf.download(ticker, period="3mo", progress=False, timeout=10)
+        
+        if df_k is not None and not df_k.empty:
+            if isinstance(df_k.columns, pd.MultiIndex): 
+                df_k.columns = df_k.columns.get_level_values(0)
             
-        df_k['5MA'] = df_k['Close'].rolling(5).mean()
-        df_k['10MA'] = df_k['Close'].rolling(10).mean()
-        df_k['20MA'] = df_k['Close'].rolling(20).mean()
-        
-        l = df_k.iloc[-1]
-        st.markdown(f"""
-            <div style="background-color: #f8f9fa; padding: 15px; border-radius: 8px; border-left: 5px solid #6c757d; font-family: monospace;">
-                5MA: {l['5MA']:.2f} | 10MA: {l['10MA']:.2f} | 20MA: {l['20MA']:.2f}
-            </div>
-        """, unsafe_allow_html=True)
-        
-        fig, axlist = mpf.plot(df_k.iloc[-90:], type='candle', returnfig=True, volume=True, figsize=(10, 6), 
-                               addplot=[mpf.make_addplot(df_k[m].iloc[-90:], color=c) for m, c in zip(['5MA','10MA','20MA'], ['orange','blue','purple'])])
-        
-        ax = axlist[0]
-        for idx, val, lbl in get_zigzag_points(df_k):
-            if idx in df_k.iloc[-90:].index:
-                ax.annotate(lbl, (df_k.index.get_loc(idx), val), ha='center', color='red' if lbl=='H' else 'green', weight='bold')
-        st.pyplot(fig)
-    else:
-        st.error(f"無法獲取 {ticker} 的資料，請稍後再試或檢查網路連線。")
+            # 計算均線
+            df_k['5MA'] = df_k['Close'].rolling(5).mean()
+            df_k['10MA'] = df_k['Close'].rolling(10).mean()
+            df_k['20MA'] = df_k['Close'].rolling(20).mean()
+            
+            # 技術看板
+            l = df_k.iloc[-1]
+            st.markdown(f"""
+                <div style="background-color: #f8f9fa; padding: 15px; border-radius: 8px; border-left: 5px solid #6c757d; font-family: monospace;">
+                    <b>{sel} 技術指標：</b><br>
+                    5MA: {l['5MA']:.2f} | 10MA: {l['10MA']:.2f} | 20MA: {l['20MA']:.2f}
+                </div>
+            """, unsafe_allow_html=True)
+            
+            # 繪圖
+            fig, axlist = mpf.plot(df_k.iloc[-90:], type='candle', returnfig=True, volume=True, figsize=(10, 6), 
+                                   addplot=[mpf.make_addplot(df_k[m].iloc[-90:], color=c) for m, c in zip(['5MA','10MA','20MA'], ['orange','blue','purple'])])
+            
+            ax = axlist[0]
+            for idx, val, lbl in get_zigzag_points(df_k):
+                if idx in df_k.iloc[-90:].index:
+                    ax.annotate(lbl, (df_k.index.get_loc(idx), val), ha='center', color='red' if lbl=='H' else 'green', weight='bold')
+            st.pyplot(fig)
+        else:
+            st.error(f"無法取得 {ticker} 的歷史價格，Yahoo Finance 可能限制了請求。請稍候重新整理。")
+    except Exception as e:
+        st.error(f"發生連線異常：{e}")
