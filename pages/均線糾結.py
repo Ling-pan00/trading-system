@@ -1,50 +1,74 @@
 import streamlit as st
-import yfinance as yf
 import pandas as pd
-import mplfinance as mpf
-import io
+import yfinance as yf
+import twstock
 
-# 1. 均線糾結判定函數
-def check_tangling(df, periods, threshold):
-    mas = {f'MA{p}': df['Close'].rolling(window=p).mean() for p in periods}
-    ma_df = pd.DataFrame(mas)
-    last_ma = ma_df.iloc[-1]
-    
-    max_ma = last_ma.max()
-    min_ma = last_ma.min()
-    
-    # 判斷糾結
-    is_tangling = (max_ma - min_ma) / min_ma < threshold
-    return is_tangling, ma_df
+st.set_page_config(page_title="台股均線糾結掃描器", layout="wide")
 
-# 2. Streamlit 介面設定
-st.title("台股均線糾結選股器")
+st.title("🏹 台股均線糾結掃描器")
+st.markdown("""
+### 篩選條件
+- **糾結定義**：MA5, MA20, MA60 三條均線差距在 3% 以內
+- **多頭確認**：股價位於季線 (MA60) 之上
+- **量能確認**：今日成交量 > 5日均量
+""")
 
-# 使用者參數輸入
-tickers = st.sidebar.text_input("輸入股票代碼 (以逗號分隔)", "2330.TW,2317.TW,2454.TW")
-ma_type = st.sidebar.radio("選擇模式", ["3線 (5,10,20)", "4線 (5,10,20,60)"])
-threshold = st.sidebar.slider("糾結閾值 (%)", 0.5, 5.0, 2.0) / 100
+# 參數設定
+threshold = st.slider("糾結閾值 (均線差距 %)", 0.5, 5.0, 3.0) / 100
 
-periods = [5, 10, 20] if "3線" in ma_type else [5, 10, 20, 60]
+@st.cache_data(ttl=86400)
+def get_stock_list():
+    stocks = []
+    for code, info in twstock.codes.items():
+        if info.market in ["上市", "上櫃"] and len(code) == 4 and code.isdigit():
+            ticker = f"{code}.TW" if info.market == "上市" else f"{code}.TWO"
+            stocks.append({"code": code, "name": info.name, "ticker": ticker})
+    return stocks
 
-if st.button("開始掃描"):
-    ticker_list = [t.strip() for t in tickers.split(",")]
-    found_stocks = []
-    
-    for t in ticker_list:
-        df = yf.download(t, period="6mo", progress=False)
-        if len(df) < 60: continue
+stock_list = get_stock_list()
+ticker_map = {s["ticker"]: {"code": s["code"], "name": s["name"]} for s in stock_list}
+tickers = list(ticker_map.keys())
+
+if st.button("🚀 開始糾結掃描"):
+    results = []
+    progress = st.progress(0)
+    batch_size = 200
+    total_batches = (len(tickers) + batch_size - 1) // batch_size
+
+    for batch_idx in range(total_batches):
+        batch_tickers = tickers[batch_idx * batch_size : (batch_idx + 1) * batch_size]
         
-        is_tangled, ma_df = check_tangling(df, periods, threshold)
-        
-        if is_tangled:
-            found_stocks.append(t)
-            st.success(f"發現糾結標的: {t}")
+        try:
+            data = yf.download(batch_tickers, period="6mo", interval="1d", group_by="ticker", progress=False)
             
-            # 繪製圖表
-            fig, ax = mpf.plot(df.iloc[-100:], type='candle', mav=periods, 
-                               volume=True, returnfig=True, figsize=(10, 6))
-            st.pyplot(fig)
+            for ticker in batch_tickers:
+                try:
+                    df = data[ticker]
+                    if len(df) < 65: continue
+                    
+                    close = df["Close"]
+                    vol = df["Volume"]
+                    
+                    ma5, ma20, ma60 = close.rolling(5).mean().iloc[-1], close.rolling(20).mean().iloc[-1], close.rolling(60).mean().iloc[-1]
+                    
+                    # 判斷糾結：最高與最低均線差距
+                    ma_vals = [ma5, ma20, ma60]
+                    diff = (max(ma_vals) - min(ma_vals)) / min(ma_vals)
+                    
+                    # 篩選條件：糾結度、股價站上季線、成交量大於5日均量
+                    if diff < threshold and close.iloc[-1] > ma60 and vol.iloc[-1] > vol.rolling(5).mean().iloc[-1]:
+                        info = ticker_map[ticker]
+                        results.append({
+                            "代號": info["code"], "名稱": info["name"], "收盤價": round(float(close.iloc[-1]), 2),
+                            "MA5": round(ma5, 2), "MA20": round(ma20, 2), "MA60": round(ma60, 2), "糾結度(%)": round(diff*100, 2)
+                        })
+                except: continue
+        except: continue
+        progress.progress((batch_idx + 1) / total_batches)
 
-    if not found_stocks:
-        st.warning("未找到符合條件的標的，請嘗試調大閾值。")
+    if results:
+        res_df = pd.DataFrame(results).sort_values("糾結度(%)")
+        st.success(f"找到 {len(res_df)} 檔潛在糾結標的")
+        st.dataframe(res_df, use_container_width=True)
+    else:
+        st.warning("⚠️ 未找到符合條件的標的，請嘗試調大糾結閾值。")
