@@ -41,18 +41,25 @@ if ticker_input:
         df['20MA'] = df['Close'].rolling(20).mean()
         df = df.dropna().copy()
 
-        # --- 表格顯示：最近 5 日收盤價 (無小數點) ---
+        # --- 表格顯示：最近 5 日收盤價 (強制橫向、無小數點) ---
         st.subheader("📊 最近 5 個交易日收盤價")
-        last_5 = df[['Close']].tail(5).copy()
-        # 將數值格式化為無小數點的字串
-        last_5['收盤價'] = last_5['Close'].apply(lambda x: f"{x:.0f}")
-        last_5.index = last_5.index.strftime('%m/%d')
-        # 轉置數據並只顯示 '收盤價' 欄位
-        table_df = last_5[['收盤價']].T
-        st.table(table_df)
-        # ------------------------------------------
+        last_5 = df[['Close']].tail(5)
+        
+        html_code = """
+        <table style="width:100%; text-align: center; border-collapse: collapse; font-size: 14px;">
+            <tr style="background-color: #f0f2f6;">
+        """
+        for date in last_5.index:
+            html_code += f"<th style='padding:8px; border:1px solid #ddd;'>{date.strftime('%m/%d')}</th>"
+        html_code += "</tr><tr>"
+        for price in last_5['Close']:
+            html_code += f"<td style='padding:8px; border:1px solid #ddd; font-weight:bold;'>{price:.0f}</td>"
+        html_code += "</tr></table>"
+        
+        st.markdown(html_code, unsafe_allow_html=True)
+        # ----------------------------------------------------
 
-        # 趨勢判斷函數
+        # 趨勢判斷與顯示
         def get_trend(col):
             now = df[col].iloc[-1]
             pre = df[col].iloc[-2]
@@ -67,7 +74,7 @@ if ticker_input:
         </div>
         """, unsafe_allow_html=True)
 
-        # 3. 波段邏輯 (ZigZag) 與繪圖
+        # 3. 波段邏輯 (ZigZag)
         df['State'] = np.where(df['Close'] > df['5MA'], 1, -1)
         change_indices = df.index[df['State'] != df['State'].shift()].tolist()
         if df.index[-1] not in change_indices: change_indices.append(df.index[-1])
@@ -85,6 +92,7 @@ if ticker_input:
                 df.at[idx, 'Label'] = "B"
                 zigzag_points.append((df.index.get_loc(idx), df.loc[idx, 'Low']))
 
+        # 4. 繪圖
         mc = mpf.make_marketcolors(up='red', down='green', edge='inherit', wick='inherit', volume='in')
         s = mpf.make_mpf_style(marketcolors=mc, gridstyle='--', y_on_right=True)
         ap = [mpf.make_addplot(df['5MA'], color='orange', width=0.8),
