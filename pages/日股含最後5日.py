@@ -10,9 +10,8 @@ st.set_page_config(page_title="日股技術分析系統", layout="wide")
 st.title("📈 技術分析波段自動標註系統")
 
 # 1. 數據下載函式
-@st.cache_data(ttl=3600) # 設定快取時效，確保盤後更新時能重新獲取
+@st.cache_data(ttl=3600)
 def load_data(ticker):
-    # 下載近 180 天資料
     end_date = (datetime.today() + timedelta(days=1)).strftime('%Y-%m-%d')
     start_date = (datetime.today() - timedelta(days=180)).strftime('%Y-%m-%d')
     suffixes = ["", ".T", ".JP", ".TW", ".TWO"]
@@ -42,34 +41,71 @@ if ticker_input:
         df['20MA'] = df['Close'].rolling(20).mean()
         df = df.dropna().copy()
 
-        # --- 優化顯示：顯示當日與近 5 日收盤價 ---
+        # --- 表格顯示：最近 5 日收盤價 (轉置橫向) ---
         st.subheader("📊 最近 5 個交易日收盤價")
-        # 直接抓取最後 5 筆，確保順序從新到舊
-        last_5 = df.tail(5).iloc[::-1]
+        last_5 = df[['Close']].tail(5).copy()
+        last_5.index = last_5.index.strftime('%m/%d')
+        # 轉置數據：將日期變為欄位 (橫向)
+        table_df = last_5.T
+        st.table(table_df)
+        # ------------------------------------------
+
+        # 趨勢判斷函數
+        def get_trend(col):
+            now = df[col].iloc[-1]
+            pre = df[col].iloc[-2]
+            return "▲" if now >= pre else "▼"
+
+        st.markdown(f"**分析標的:** `{actual_ticker}`")
+        st.markdown(f"""
+        <div style="background-color: #f8f9fa; padding: 10px; border-radius: 5px; font-family: monospace; font-weight: bold;">
+            <span style="color: #FF9800;">5MA: {df['5MA'].iloc[-1]:.2f} {get_trend('5MA')}</span> | 
+            <span style="color: #000000;">10MA: {df['10MA'].iloc[-1]:.2f} {get_trend('10MA')}</span> | 
+            <span style="color: #9C27B0;">20MA: {df['20MA'].iloc[-1]:.2f} {get_trend('20MA')}</span>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # 3. 波段邏輯 (ZigZag) 與繪圖 (保持不變)
+        df['State'] = np.where(df['Close'] > df['5MA'], 1, -1)
+        change_indices = df.index[df['State'] != df['State'].shift()].tolist()
+        if df.index[-1] not in change_indices: change_indices.append(df.index[-1])
         
-        cols = st.columns(5)
-        for i, col in enumerate(cols):
-            date_str = last_5.index[i].strftime('%m/%d')
-            price = last_5.iloc[i]['Close']
-            
-            # 計算與前一日的漲跌點數
-            if i < 4:
-                delta = price - last_5.iloc[i+1]['Close']
+        df['Label'] = None
+        zigzag_points = []
+        for i in range(len(change_indices) - 1):
+            subset = df.loc[change_indices[i]:change_indices[i+1]]
+            if subset['State'].iloc[0] == 1:
+                idx = subset['High'].idxmax()
+                df.at[idx, 'Label'] = "H"
+                zigzag_points.append((df.index.get_loc(idx), df.loc[idx, 'High']))
             else:
-                delta = 0
-            
-            # 使用 metric 顯示，顏色會隨 delta 自動變色
-            col.metric(date_str, f"{price:.2f}", f"{delta:.2f}" if i < 4 else None)
-        # ---------------------------------------
+                idx = subset['Low'].idxmin()
+                df.at[idx, 'Label'] = "B"
+                zigzag_points.append((df.index.get_loc(idx), df.loc[idx, 'Low']))
 
-        # 趨勢與均線顯示
-        st.markdown(f"**分析標的:** `{actual_ticker}` (資料更新時間: {datetime.now().strftime('%Y-%m-%d %H:%M')})")
+        mc = mpf.make_marketcolors(up='red', down='green', edge='inherit', wick='inherit', volume='in')
+        s = mpf.make_mpf_style(marketcolors=mc, gridstyle='--', y_on_right=True)
+        ap = [mpf.make_addplot(df['5MA'], color='orange', width=0.8),
+              mpf.make_addplot(df['10MA'], color='black', width=0.8),
+              mpf.make_addplot(df['20MA'], color='purple', width=0.8)]
         
-        # ... (後續繪圖邏輯保持不變) ...
-        # [此處省略與您原程式相同的繪圖與指標邏輯...]
+        fig, axlist = mpf.plot(df, type='candle', style=s, addplot=ap, returnfig=True, figsize=(12, 7), volume=True)
         
-        # 為了簡潔顯示，請將您原本的 mpf 繪圖與 ZigZag 邏輯接在此下方
-        # ... (ZigZag 與 st.pyplot(fig) 程式碼) ...
-
+        main_ax = axlist[0]
+        if len(zigzag_points) > 1:
+            x, y = zip(*zigzag_points)
+            main_ax.plot(x, y, color='blue', alpha=0.5, linewidth=1.5, zorder=3)
+        
+        for idx, row in df[df['Label'].notnull()].iterrows():
+            x_idx = df.index.get_loc(idx)
+            is_h = (row['Label'] == "H")
+            val = row['High'] if is_h else row['Low']
+            v_offset = 20 if is_h else -25 
+            main_ax.annotate(row['Label'], xy=(x_idx, val), xytext=(0, v_offset),
+                             textcoords='offset points', ha='center', color='red' if is_h else 'green', weight='bold', fontsize=10)
+            main_ax.annotate(f"{val:.0f}", xy=(x_idx, val), xytext=(0, v_offset + (12 if is_h else -12)),
+                             textcoords='offset points', ha='center', color='red' if is_h else 'green', fontsize=8)
+        
+        st.pyplot(fig)
     else:
         st.error("查無資料，請確認代號是否正確。")
