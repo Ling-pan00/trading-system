@@ -41,12 +41,14 @@ if ticker_input:
         df['20MA'] = df['Close'].rolling(20).mean()
         df = df.dropna().copy()
 
-        # --- 表格顯示：最近 5 日收盤價 (轉置橫向) ---
+        # --- 表格顯示：最近 5 日收盤價 (無小數點) ---
         st.subheader("📊 最近 5 個交易日收盤價")
         last_5 = df[['Close']].tail(5).copy()
+        # 將數值格式化為無小數點的字串
+        last_5['收盤價'] = last_5['Close'].apply(lambda x: f"{x:.0f}")
         last_5.index = last_5.index.strftime('%m/%d')
-        # 轉置數據：將日期變為欄位 (橫向)
-        table_df = last_5.T
+        # 轉置數據並只顯示 '收盤價' 欄位
+        table_df = last_5[['收盤價']].T
         st.table(table_df)
         # ------------------------------------------
 
@@ -65,7 +67,7 @@ if ticker_input:
         </div>
         """, unsafe_allow_html=True)
 
-        # 3. 波段邏輯 (ZigZag) 與繪圖 (保持不變)
+        # 3. 波段邏輯 (ZigZag) 與繪圖
         df['State'] = np.where(df['Close'] > df['5MA'], 1, -1)
         change_indices = df.index[df['State'] != df['State'].shift()].tolist()
         if df.index[-1] not in change_indices: change_indices.append(df.index[-1])
