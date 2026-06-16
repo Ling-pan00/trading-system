@@ -5,30 +5,28 @@ import mplfinance as mpf
 import numpy as np
 import requests
 from bs4 import BeautifulSoup
-import io
 from datetime import datetime, timedelta
 
 st.set_page_config(page_title="200檔股票轉折波段系統", layout="wide")
 st.title("📈 200檔個股轉折自動標註系統")
 
-# 1. 強力抓取函數 (結合 BeautifulSoup 與 pd.read_html)
+# 1. 抓取函數
 @st.cache_data(ttl=3600)
 def get_yahoo_ranking(url):
     headers = {'User-Agent': 'Mozilla/5.0'}
     try:
         res = requests.get(url, headers=headers)
         res.raise_for_status()
-        soup = BeautifulSoup(res.text, 'html.parser')
-        # 將 HTML 轉回 DataFrame
-        dfs = pd.read_html(io.StringIO(str(soup)))
+        # 強制使用 lxml 解析，確保不需要 html5lib 也能執行
+        dfs = pd.read_html(res.text, flavor='lxml')
         return dfs[0] if len(dfs) > 0 else None
     except Exception as e:
         st.error(f"抓取失敗: {e}")
         return None
 
-# 2. 初始化與清單建立
+# 2. 初始化清單
 if 'stock_list' not in st.session_state:
-    with st.spinner('正在獲取最新排行清單...'):
+    with st.spinner('正在從 Yahoo 獲取 200 檔排行資料...'):
         up_df = get_yahoo_ranking("https://tw.stock.yahoo.com/rank/change-up/")
         down_df = get_yahoo_ranking("https://tw.stock.yahoo.com/rank/change-down/")
         
@@ -39,14 +37,12 @@ if 'stock_list' not in st.session_state:
         if down_df is not None:
             for s in down_df['代號'].astype(str).tolist():
                 all_stocks.append(f"{s.split('.')[0]} (跌幅)")
-        
         st.session_state.stock_list = all_stocks
 
-# 3. 介面選擇
+# 3. 介面與繪圖
 selected = st.selectbox("請選擇個股:", st.session_state.stock_list)
 stock_code = selected.split(' ')[0]
 
-# 4. 資料下載與繪圖
 @st.cache_data
 def load_data(ticker):
     end = (datetime.today() + timedelta(days=1)).strftime('%Y-%m-%d')
@@ -67,10 +63,9 @@ if stock_code:
         df['20MA'] = df['Close'].rolling(20).mean()
         df = df.dropna().copy()
 
-        # 波段邏輯
+        # 波段邏輯 (5MA轉折)
         df['State'] = np.where(df['Close'] > df['5MA'], 1, -1)
         change_indices = df.index[df['State'] != df['State'].shift()].tolist()
-        if df.index[-1] not in change_indices: change_indices.append(df.index[-1])
         
         zigzag_points = []
         for i in range(len(change_indices) - 1):
@@ -93,7 +88,6 @@ if stock_code:
         if len(zigzag_points) > 1:
             x, y = zip(*zigzag_points)
             main_ax.plot(x, y, color='#2196F3', alpha=0.7, linewidth=1.5, zorder=3)
-            
         st.pyplot(fig)
     else:
-        st.error(f"無法下載 {stock_code} 的數據，請檢查代號是否正確。")
+        st.error(f"找不到 {stock_code} 的數據。")
