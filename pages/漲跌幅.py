@@ -4,42 +4,41 @@ import yfinance as yf
 import mplfinance as mpf
 import numpy as np
 import requests
-from bs4 import BeautifulSoup
+import io
 from datetime import datetime, timedelta
 
 st.set_page_config(page_title="200檔股票轉折波段系統", layout="wide")
 st.title("📈 200檔個股轉折自動標註系統")
 
-# 1. 抓取函數
+# 爬蟲函數 - 使用 BytesIO 解決 No such file 錯誤
 @st.cache_data(ttl=3600)
 def get_yahoo_ranking(url):
     headers = {'User-Agent': 'Mozilla/5.0'}
     try:
         res = requests.get(url, headers=headers)
         res.raise_for_status()
-        # 強制使用 lxml 解析，確保不需要 html5lib 也能執行
-        dfs = pd.read_html(res.text, flavor='lxml')
-        return dfs[0] if len(dfs) > 0 else None
+        # 轉換為 BytesIO 物件，徹底避免將 HTML 解析為檔案路徑的錯誤
+        html_stream = io.BytesIO(res.content)
+        dfs = pd.read_html(html_stream, flavor='lxml')
+        return dfs[0] if dfs else None
     except Exception as e:
-        st.error(f"抓取失敗: {e}")
+        st.error(f"解析網頁失敗，請稍後再試。錯誤代碼: {e}")
         return None
 
-# 2. 初始化清單
+# 初始化股票清單
 if 'stock_list' not in st.session_state:
     with st.spinner('正在從 Yahoo 獲取 200 檔排行資料...'):
         up_df = get_yahoo_ranking("https://tw.stock.yahoo.com/rank/change-up/")
         down_df = get_yahoo_ranking("https://tw.stock.yahoo.com/rank/change-down/")
         
         all_stocks = []
-        if up_df is not None:
-            for s in up_df['代號'].astype(str).tolist():
-                all_stocks.append(f"{s.split('.')[0]} (漲幅)")
-        if down_df is not None:
-            for s in down_df['代號'].astype(str).tolist():
-                all_stocks.append(f"{s.split('.')[0]} (跌幅)")
+        for df, label in [(up_df, "漲幅"), (down_df, "跌幅")]:
+            if df is not None and '代號' in df.columns:
+                for s in df['代號'].astype(str).tolist():
+                    all_stocks.append(f"{s.split('.')[0]} ({label})")
         st.session_state.stock_list = all_stocks
 
-# 3. 介面與繪圖
+# 介面選擇
 selected = st.selectbox("請選擇個股:", st.session_state.stock_list)
 stock_code = selected.split(' ')[0]
 
@@ -52,18 +51,18 @@ def load_data(ticker):
         if not df.empty: return df
     return None
 
+# 繪圖主邏輯
 if stock_code:
     df = load_data(stock_code)
     if df is not None and len(df) > 10:
         if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
         
-        # 計算均線
         df['5MA'] = df['Close'].rolling(5).mean()
         df['10MA'] = df['Close'].rolling(10).mean()
         df['20MA'] = df['Close'].rolling(20).mean()
         df = df.dropna().copy()
 
-        # 波段邏輯 (5MA轉折)
+        # 波段邏輯
         df['State'] = np.where(df['Close'] > df['5MA'], 1, -1)
         change_indices = df.index[df['State'] != df['State'].shift()].tolist()
         
@@ -74,7 +73,7 @@ if stock_code:
             val = subset['High'].max() if subset['State'].iloc[0] == 1 else subset['Low'].min()
             zigzag_points.append((df.index.get_loc(idx), val))
 
-        # 繪圖
+        # 繪圖設定
         mc = mpf.make_marketcolors(up='red', down='green', edge='inherit', wick='inherit', volume='in')
         s = mpf.make_mpf_style(marketcolors=mc, gridstyle='--')
         ap = [
@@ -84,10 +83,9 @@ if stock_code:
         ]
         
         fig, axlist = mpf.plot(df, type='candle', style=s, addplot=ap, returnfig=True, figsize=(12, 7), volume=True)
-        main_ax = axlist[0]
         if len(zigzag_points) > 1:
             x, y = zip(*zigzag_points)
-            main_ax.plot(x, y, color='#2196F3', alpha=0.7, linewidth=1.5, zorder=3)
+            axlist[0].plot(x, y, color='#2196F3', alpha=0.7, linewidth=1.5, zorder=3)
         st.pyplot(fig)
     else:
-        st.error(f"找不到 {stock_code} 的數據。")
+        st.error(f"找不到 {stock_code} 的數據，可能該股票已下市或資料暫缺。")
