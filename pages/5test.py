@@ -158,19 +158,20 @@ if st.button("🚀 執行盤後策略選股"):
         st.session_state[f"idx_{pool_name}"] = 0
 
 # ==========================================
-# 📊 畫面渲染與盤中監控
+# 📊 畫面渲染與盤中監控 (已修正最新報價獲取)
 # ==========================================
 def run_monitor_optimized(pool_df):
     if pool_df.empty: return pd.DataFrame()
     monitor_tickers = pool_df["ticker"].tolist()
-    # 修正點：使用 10d 歷史以利計算均線，並取最後一筆作為最新價
-    live_data = yf.download(tickers=monitor_tickers, period="10d", interval="1d", group_by="ticker", progress=False)
+    # 【修正】：確保抓取的是最新交易日數據，並明確轉型為 float
+    live_data = yf.download(tickers=monitor_tickers, period="5d", interval="1d", group_by="ticker", progress=False)
     live_results = []
     for _, row in pool_df.iterrows():
         t = row["ticker"]
         try:
             df = live_data[t] if len(monitor_tickers) > 1 else live_data
             df = df.dropna()
+            # 獲取盤中最新成交價
             close_now = float(df["Close"].iloc[-1])
             ma5 = float(df["Close"].rolling(5).mean().iloc[-1])
             
