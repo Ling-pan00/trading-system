@@ -9,6 +9,3 @@ mplfinance
 numpy
 lxml
 scipy
-requests
-beautifulsoup4
-html5lib
