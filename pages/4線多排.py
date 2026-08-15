@@ -29,7 +29,6 @@ def get_stock_list():
                 })
     return stocks
 
-# 初始化股票資料對照表
 stock_list = get_stock_list()
 ticker_map = {s["ticker"]: s for s in stock_list}
 tickers = list(ticker_map.keys())
@@ -40,7 +39,6 @@ st.write(f"📦 **目前監測台股總數：{len(tickers)} 檔**（已自動過
 # 📈 技術指標計算 (納入 60MA 季線)
 # ==========================================
 def add_indicators(df):
-    """計算策略所需的技術指標，包含 60MA 季線"""
     df = df.copy()
     df["ma5"] = df["Close"].rolling(5).mean()
     df["ma10"] = df["Close"].rolling(10).mean()
@@ -53,7 +51,6 @@ def add_indicators(df):
 # 💯 因子多頭評分模型
 # ==========================================
 def score(price, ma5, ma10, ma20, ma60, vol, vol_ma5, change_pct):
-    """根據四線多頭排列、量能與當日漲跌進行綜合評分"""
     s = 0
     s += 2 if price > ma5 else 0
     s += 1 if ma5 > ma10 else 0
@@ -64,24 +61,21 @@ def score(price, ma5, ma10, ma20, ma60, vol, vol_ma5, change_pct):
     return s
 
 # ==========================================
-# 🎯 策略條件檢查（四線多排 + 基礎過濾）
+# 🎯 策略條件檢查
 # ==========================================
 def check_strategy(df, price, ma5, ma10, ma20, ma60, s):
-    """檢查是否符合嚴格四線多頭排列與多頭趨勢"""
     try:
         if df is None or df.empty or len(df) < 70:
             return False
 
-        # 核心條件：四線多頭排列 (5MA > 10MA > 20MA > 60MA)
         four_line_align = (ma5 > ma10) and (ma10 > ma20) and (ma20 > ma60)
         if not four_line_align:
             return False
 
         ma20_series = df["ma20"]
         above_ma20 = price > ma20
-        ma20_up = ma20_series.iloc[-1] > ma20_series.iloc[-5]  # MA20 趨勢上揚
+        ma20_up = ma20_series.iloc[-1] > ma20_series.iloc[-5]
 
-        # 綜合評分門檻達標（至少 5 分以上）
         if ma20_up and above_ma20 and s >= 5:
             return True
 
@@ -93,17 +87,14 @@ def check_strategy(df, price, ma5, ma10, ma20, ma60, s):
 # 💰 進出場策略與風控水位
 # ==========================================
 def trade_levels(price, ma5, ma10):
-    """給予防守停損與波段目標價配置"""
-    stop = ma10             # 以 MA10 為波段防守
-    target = price * 1.15   # 目標期待 +15%
+    stop = ma10             
+    target = price * 1.15   
     return round(price, 2), round(stop, 2), round(target, 2)
 
-
 # ==========================================
-# 🎨 轉折 K 線圖繪製模組 (含 60MA)
+# 🎨 轉折 K 線圖繪製模組
 # ==========================================
 def draw_zigzag_chart(ticker_code, stock_name):
-    """繪製 4 個月區間的 5MA 轉折波段圖，並顯示 5/10/20/60 MA"""
     end_date = datetime.today().strftime('%Y-%m-%d')
     start_date = (datetime.today() - timedelta(days=120)).strftime('%Y-%m-%d')
     
@@ -206,7 +197,6 @@ def draw_zigzag_chart(ticker_code, stock_name):
     st.pyplot(fig)
     plt.close(fig)
 
-
 # ==========================================
 # 🚀 盤後選股功能
 # ==========================================
@@ -243,7 +233,6 @@ if st.button("🚀 執行四線多排策略選股"):
                 price = df["Close"].iloc[-1]
                 volume = df["Volume"].iloc[-1]
                 
-                # 成交量大於 800 張
                 volume_sheets = volume / 1000 
                 if volume_sheets < 800:
                     continue
@@ -256,13 +245,11 @@ if st.button("🚀 執行四線多排策略選股"):
 
                 s = score(price, ma5, ma10, ma20, ma60, volume, df["vol_ma5"].iloc[-1], change_pct)
                 
-                # 檢查四線多排條件
                 if not check_strategy(df, price, ma5, ma10, ma20, ma60, s):
                     continue
 
                 entry, stop, target = trade_levels(price, ma5, ma10)
 
-                # 防追高乖離濾網（8% 限制）
                 risk_pct = (price - stop) / stop
                 if risk_pct > 0.08:
                     continue
@@ -292,9 +279,8 @@ if st.button("🚀 執行四線多排策略選股"):
         st.session_state["qualified_stocks"] = df_res
         st.session_state["stock_idx"] = 0
 
-
 # ==========================================
-# 📊 畫面渲染與單一名單互動介面
+# 📊 畫面渲染與修正後的互動選單機制
 # ==========================================
 if "qualified_stocks" in st.session_state:
     saved_df = st.session_state["qualified_stocks"]
@@ -309,35 +295,45 @@ if "qualified_stocks" in st.session_state:
         if "stock_idx" not in st.session_state:
             st.session_state["stock_idx"] = 0
             
-        current_idx = st.session_state["stock_idx"]
+        # 確保 index 範圍安全
+        if st.session_state["stock_idx"] >= len(stock_options):
+            st.session_state["stock_idx"] = 0
 
         st.write(f"🔍 **切換檢視 K 線圖：**")
         btn_col1, sel_col, btn_col2 = st.columns([1, 4, 1])
         
+        # 上一檔按鈕回呼
         with btn_col1:
             if st.button("⏮️ 上一檔", use_container_width=True):
-                if current_idx > 0:
-                    st.session_state["stock_idx"] = current_idx - 1
-                    st.rerun()
+                if st.session_state["stock_idx"] > 0:
+                    st.session_state["stock_idx"] -= 1
+                else:
+                    st.session_state["stock_idx"] = len(stock_options) - 1
+                st.rerun()
 
+        # 下拉選單連動（使用 on_change 確保雙向綁定穩定）
         with sel_col:
-            selected_stock = st.selectbox(
+            def on_select_change():
+                selected_val = st.session_state["single_stock_selector"]
+                st.session_state["stock_idx"] = stock_options.index(selected_val)
+
+            st.selectbox(
                 "選擇股票：", 
                 stock_options, 
                 index=st.session_state["stock_idx"],
                 key="single_stock_selector",
+                on_change=on_select_change,
                 label_visibility="collapsed"
             )
-            new_idx = stock_options.index(selected_stock)
-            if new_idx != current_idx:
-                st.session_state["stock_idx"] = new_idx
-                st.rerun()
 
+        # 下一檔按鈕回呼
         with btn_col2:
             if st.button("⏭️ 下一檔", use_container_width=True):
-                if current_idx < len(stock_options) - 1:
-                    st.session_state["stock_idx"] = current_idx + 1
-                    st.rerun()
+                if st.session_state["stock_idx"] < len(stock_options) - 1:
+                    st.session_state["stock_idx"] += 1
+                else:
+                    st.session_state["stock_idx"] = 0
+                st.rerun()
         
         final_idx = st.session_state["stock_idx"]
         target_row = saved_df.iloc[final_idx]
@@ -345,7 +341,6 @@ if "qualified_stocks" in st.session_state:
         draw_zigzag_chart(target_row["ticker"], target_row["名稱"])
     else:
         st.info("目前無符合條件股票")
-
 
 # ==========================================
 # 📈 盤中即時監控模組
@@ -413,7 +408,6 @@ def run_monitor_optimized(pool_df):
             continue
             
     return pd.DataFrame(live_results)
-
 
 if st.button("🔄 刷新盤中監控訊號"):
     if "qualified_stocks" not in st.session_state:
