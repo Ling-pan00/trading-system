@@ -40,6 +40,7 @@ st.write(f"📦 **目前監測台股總數：{len(tickers)} 檔**（已自動過
 # ==========================================
 def add_indicators(df):
     df = df.copy()
+    df["ma5"] = df["Close"].rolling(5).mean()
     df["ma20"] = df["Close"].rolling(20).mean()
     df["ma60"] = df["Close"].rolling(60).mean()
     df["vol_ma5"] = df["Volume"].rolling(5).mean()
@@ -50,56 +51,45 @@ def add_indicators(df):
 # ==========================================
 def check_inverse_head_and_shoulders(df):
     """
-    簡化的頭肩底檢測邏輯：
+    頭肩底檢測邏輯：
     1. 尋找過去一段時間內的三個低點（左肩、頭部、右肩），滿足 Head < Left & Head < Right。
-    2. 當前收盤價突破或逼近頸線（左右肩之間的反彈高點連線）。
-    3. 伴隨成交量放大。
+    2. 當前收盤價突破或逼近頸線。
     """
     try:
         if df is None or df.empty or len(df) < 90:
             return False, 0, 0
 
-        # 取最近 90 天數據進行底部型態掃描
         recent_df = df.iloc[-90:].copy()
         closes = recent_df["Close"].values
         lows = recent_df["Low"].values
         highs = recent_df["High"].values
 
-        # 尋找區間內的最低點作為「頭部 (Head)」
-        head_idx = np.argmin(lows[10:-10]) + 10 # 排除頭尾
+        head_idx = np.argmin(lows[10:-10]) + 10 
         head_price = lows[head_idx]
 
-        # 左肩應在頭部之前
         left_window_lows = lows[:head_idx-5]
         if len(left_window_lows) < 10:
             return False, 0, 0
         left_idx = np.argmin(left_window_lows)
         left_price = lows[left_idx]
 
-        # 右肩應在頭部之後
         right_window_lows = lows[head_idx+5:-5]
         if len(right_window_lows) < 10:
             return False, 0, 0
         right_idx = np.argmin(right_window_lows) + head_idx + 5
         right_price = lows[right_idx]
 
-        # 核心條件：頭部必須低於兩肩
         if not (head_price < left_price and head_price < right_price):
             return False, 0, 0
 
-        # 尋找介於左肩與頭部之間的高點、頭部與右肩之間的高點作為頸線參考
         neckline_1 = np.max(highs[left_idx:head_idx])
         neckline_2 = np.max(highs[head_idx:right_idx])
         neckline = (neckline_1 + neckline_2) / 2
 
         current_price = closes[-1]
-        
-        # 條件：現價必須剛好突破頸線，或在頸線附近（正準備突破）
-        # 且現價高於 60MA（中期趨勢轉多）
         ma60 = recent_df["ma60"].iloc[-1]
         is_above_ma60 = current_price > ma60
 
-        # 突破或貼近頸線 (容許 3% 內波動或剛突破)
         is_near_or_breakout = (current_price >= neckline * 0.97) and (current_price <= neckline * 1.08)
 
         if is_above_ma60 and is_near_or_breakout:
@@ -113,14 +103,14 @@ def check_inverse_head_and_shoulders(df):
 # 💰 進出場策略與風控水位
 # ==========================================
 def trade_levels(price, head_price, neckline):
-    stop = head_price * 0.98        # 停損設在頭部下方 2%
-    target = neckline + (neckline - head_price) # 依頭肩底教科書滿足點：頸線加上頸線到頭部的距離
+    stop = head_price * 0.98        
+    target = neckline + (neckline - head_price) 
     return round(price, 2), round(stop, 2), round(target, 2)
 
 # ==========================================
-# 🎨 頭肩底 K 線圖與型態標註繪製模組
+# 🎨 轉折 K 線圖與高低點標註繪製模組
 # ==========================================
-def draw_ihs_chart(ticker_code, stock_name):
+def draw_zigzag_chart(ticker_code, stock_name):
     end_date = datetime.today().strftime('%Y-%m-%d')
     start_date = (datetime.today() - timedelta(days=150)).strftime('%Y-%m-%d')
     
@@ -133,6 +123,7 @@ def draw_ihs_chart(ticker_code, stock_name):
     if isinstance(df_chart.columns, pd.MultiIndex):
         df_chart.columns = df_chart.columns.get_level_values(0)
 
+    df_chart['5MA'] = df_chart['Close'].rolling(window=5).mean()
     df_chart['20MA'] = df_chart['Close'].rolling(window=20).mean()
     df_chart['60MA'] = df_chart['Close'].rolling(window=60).mean()
 
@@ -140,14 +131,59 @@ def draw_ihs_chart(ticker_code, stock_name):
     df_chart['High'] = pd.to_numeric(df_chart['High'], errors='coerce')
     df_chart['Low'] = pd.to_numeric(df_chart['Low'], errors='coerce')
 
-    df_chart = df_chart.dropna(subset=['Close', '20MA', '60MA']).copy()
+    df_chart = df_chart.dropna(subset=['Close', '5MA', '20MA', '60MA']).copy()
 
-    st.markdown(f"#### 📈 {stock_name} ({ticker_code}) — 頭肩底反轉型態圖")
+    # 計算轉折點 (Zigzag H/B)
+    df_chart['State'] = np.where(df_chart['Close'] > df_chart['5MA'], 1, -1)
+    df_chart['State_Group'] = (df_chart['State'] != df_chart['State'].shift()).cumsum()
+
+    zigzag_points = []
+    grouped = df_chart.groupby('State_Group')
+    group_ids = sorted(df_chart['State_Group'].unique())
+
+    for g_id in group_ids:
+        group_data = grouped.get_group(g_id)
+        state = group_data['State'].iloc[0]
+        if g_id <= 2: continue
+        if state == 1:
+            highest_idx = group_data['High'].idxmax()
+            zigzag_points.append((df_chart.index.get_loc(highest_idx), df_chart.loc[highest_idx, 'High']))
+            df_chart.loc[highest_idx, 'Label'] = "H"
+        else:
+            lowest_idx = group_data['Low'].idxmin()
+            zigzag_points.append((df_chart.index.get_loc(lowest_idx), df_chart.loc[lowest_idx, 'Low']))
+            df_chart.loc[lowest_idx, 'Label'] = "B"
+
+    def get_ma_details(col_name):
+        now = df_chart[col_name].iloc[-1]
+        pre = df_chart[col_name].iloc[-2]
+        arrow = "▲" if now >= pre else "▼"
+        return f"{now:.2f} {arrow}"
+
+    st.markdown(f"#### 📈 {stock_name} ({ticker_code}) — 5MA 轉折波段圖")
+    st.markdown(f"""
+        <div style="
+            background-color: #f8f9fa; 
+            padding: 10px 15px; 
+            border-radius: 5px; 
+            margin-top: 5px; 
+            margin-bottom: 10px; 
+            font-family: monospace; 
+            font-size: 14px; 
+            font-weight: bold;
+            border-left: 5px solid #6c757d;
+        ">
+            <span style="color: #FF9800; margin-right: 15px;">5MA: {get_ma_details('5MA')}</span>
+            <span style="color: #9C27B0; margin-right: 15px;">20MA: {get_ma_details('20MA')}</span>
+            <span style="color: #009688;">60MA: {get_ma_details('60MA')}</span>
+        </div>
+    """, unsafe_allow_html=True)
 
     mc = mpf.make_marketcolors(up='red', down='green', edge='inherit', wick='inherit', volume='in')
     s_style = mpf.make_mpf_style(marketcolors=mc, gridstyle='--')
 
     plots = [
+        mpf.make_addplot(df_chart['5MA'], color='orange', width=1),
         mpf.make_addplot(df_chart['20MA'], color='purple', width=1),
         mpf.make_addplot(df_chart['60MA'], color='teal', width=1.2)
     ]
@@ -158,6 +194,20 @@ def draw_ihs_chart(ticker_code, stock_name):
         panel_ratios=(4,1)
     )
     
+    main_ax = axlist[0]
+
+    if len(zigzag_points) > 1:
+        x_coords, y_coords = zip(*zigzag_points)
+        main_ax.plot(x_coords, y_coords, color='black', alpha=0.5, linewidth=1.5, zorder=3)
+
+    for idx, row in df_chart[df_chart['Label'].notnull()].iterrows():
+        x = df_chart.index.get_loc(idx)
+        is_h = row['Label'] == "H"
+        main_ax.text(x, row['High' if is_h else 'Low'], row['Label'],
+                    color='red' if is_h else 'green', weight='bold',
+                    ha='center', va='bottom' if is_h else 'top',
+                    bbox=dict(boxstyle="circle,pad=0.1", fc="yellow", ec="none", alpha=0.6))
+
     st.pyplot(fig)
     plt.close(fig)
 
@@ -285,8 +335,8 @@ if "qualified_stocks" in st.session_state:
                 st.rerun()
         
         final_idx = st.session_state["stock_idx"]
-        target_row = saved_df.iloc.iloc[final_idx] if hasattr(saved_df.iloc, 'iloc') else saved_df.iloc[final_idx]
+        target_row = saved_df.iloc[final_idx]
         
-        draw_ihs_chart(target_row["ticker"], target_row["名稱"])
+        draw_zigzag_chart(target_row["ticker"], target_row["名稱"])
     else:
         st.info("目前無符合條件股票")
