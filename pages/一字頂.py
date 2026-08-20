@@ -43,7 +43,7 @@ def add_indicators(df):
     return df
 
 def check_flat_top(df):
-    """偵測一字頂：多個高點落於 1.2% 區間內"""
+    """偵測一字頂：多個高點落於 10% 區間內"""
     try:
         if len(df) < 80: return False, 0, 0
         recent = df.iloc[-80:]
@@ -61,7 +61,7 @@ def check_flat_top(df):
         peaks = sorted(peaks, reverse=True)
         top = peaks[0]
         for p in peaks[1:]:
-            if abs(top - p) / top <= 0.012: # 1.2% 誤差範圍
+            if abs(top - p) / top <= 0.1: # 10% 誤差範圍
                 level = (top + p) / 2
                 # 條件：現價位於平頂附近，且跌破 5MA
                 if (df["Close"].iloc[-1] <= level * 1.03) and (df["Close"].iloc[-1] <= df["ma5"].iloc[-1]):
