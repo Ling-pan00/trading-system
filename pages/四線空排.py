@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 
 # 設定 Streamlit 頁面配置
 st.set_page_config(page_title="四線空排量化選股 Pro", layout="wide")
-st.title("📊 四線空頭排列量化交易系統（單一精選清單 + 800張 + 8%防風險）")
+st.title("📊 四線空頭排列量化交易系統（單一精選清單 + 800張）")
 
 # ==========================================
 # 📦 股票池模組 (自動抓取台股上市/上櫃代號)
