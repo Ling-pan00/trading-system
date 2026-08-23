@@ -93,7 +93,7 @@ if st.button("🚀 執行一字頂策略選股"):
     for idx, t in enumerate(tickers):
         try:
             df = yf.download(t, period="6mo", progress=False)
-            if df.empty or (df["Volume"].iloc[-1] / 1000) < 800: continue
+            if df.empty or (df["Volume"].iloc[-1] / 1000) < 500: continue
             
             df = add_indicators(df)
             is_flat, level, support = check_flat_top(df)
