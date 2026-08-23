@@ -47,14 +47,14 @@ def add_indicators(df):
     return df
 
 # ==========================================
-# 🎯 一字頂 (平頂阻力) 策略條件檢查
+# 🎯 一字頂 (平頂阻力) 策略條件檢查 (已平衡精準度與條件)
 # ==========================================
 def check_flat_top(df):
     """
     一字頂（平頂阻力）檢測邏輯：
     1. 檢視過去 90 天的高點走勢。
-    2. 尋找多個相近的高點（誤差在 3% 以內），形成平頂壓力區。
-    3. 現價貼近一字頂壓力區，且跌破 5MA 出現轉弱訊號。
+    2. 尋找至少 2 次以上、價格誤差在 2.0% 以內、且間隔 5 天以上的明顯高點。
+    3. 現價貼近一字頂阻力區，且跌破 5MA 出現轉弱訊號。
     """
     try:
         if df is None or df.empty or len(df) < 90:
@@ -65,7 +65,7 @@ def check_flat_top(df):
         closes = recent_df["Close"].values
         lows = recent_df["Low"].values
 
-        # 尋找波段高點
+        # 尋找顯著的波段高點（左右各 5 天最高）
         peaks = []
         for i in range(5, len(highs)-5):
             if highs[i] == max(highs[i-5:i+6]):
@@ -74,18 +74,20 @@ def check_flat_top(df):
         if len(peaks) < 2:
             return False, 0, 0
 
-        # 檢測是否有兩個以上高度相近的高點 (誤差 3% 內)
+        # 尋找高點群組 (誤差 2.0%，時間間隔至少 5 天)
         flat_resistance = 0
         found = False
+        
         for i in range(len(peaks)):
+            cluster = [peaks[i]]
             for j in range(i + 1, len(peaks)):
-                p1 = peaks[i][1]
-                p2 = peaks[j][1]
-                if abs(p1 - p2) / p1 <= 0.03:
-                    flat_resistance = (p1 + p2) / 2
-                    found = True
-                    break
-            if found:
+                if peaks[j][0] - cluster[-1][0] >= 5: # 間隔 5 天
+                    if abs(peaks[j][1] - cluster[0][1]) / cluster[0][1] <= 0.02: # 誤差 2%
+                        cluster.append(peaks[j])
+            
+            if len(cluster) >= 2:
+                flat_resistance = sum([p[1] for p in cluster]) / len(cluster)
+                found = True
                 break
 
         if not found:
@@ -94,9 +96,9 @@ def check_flat_top(df):
         current_price = closes[-1]
         ma5 = recent_df["ma5"].iloc[-1]
         
-        # 條件：現價貼近一字頂壓力（容許貼近 5% 內或剛觸及），且跌破 5MA
-        is_near_resistance = (current_price >= flat_resistance * 0.95) and (current_price <= flat_resistance * 1.03)
-        is_weakening = current_price <= ma5
+        # 條件：現價貼近一字頂壓力（阻力價上下 2.5% 內），且跌破 5MA
+        is_near_resistance = (current_price >= flat_resistance * 0.975) and (current_price <= flat_resistance * 1.025)
+        is_weakening = current_price < ma5
 
         if is_near_resistance and is_weakening:
             support_price = lows[-30:].min()
@@ -282,7 +284,7 @@ if st.button("🚀 執行一字頂策略選股"):
     status_text.text("🎉 一字頂策略選股完成！")
 
     if not results:
-        st.warning("⚠️ 經過成交量（500張）與一字頂型態限制篩選後，目前沒有符合標準的標的。")
+        st.warning("⚠️ 經過一字頂型態與成交量限制篩選後，目前沒有符合標準的標的。")
         st.session_state["qualified_stocks"] = pd.DataFrame()
     else:
         df_res = pd.DataFrame(results).sort_values(by="成交量(張)", ascending=False).reset_index(drop=True)
