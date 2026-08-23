@@ -253,7 +253,7 @@ if st.button("🚀 執行W底策略選股"):
                 volume = df["Volume"].iloc[-1]
                 
                 volume_sheets = volume / 1000 
-                if volume_sheets < 800:
+                if volume_sheets < 500:
                     continue
 
                 is_w, neckline, low_price = check_w_bottom(df)
