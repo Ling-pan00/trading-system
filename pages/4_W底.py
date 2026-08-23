@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 
 # 設定 Streamlit 頁面配置
 st.set_page_config(page_title="W底反轉量化選股 Pro", layout="wide")
-st.title("📊 W底反轉量化交易系統（雙底突破 + 800張量能過濾）")
+st.title("📊 W底反轉量化交易系統（雙底突破 + 500張量能過濾）")
 
 # ==========================================
 # 📦 股票池模組 (自動抓取台股上市/上櫃代號)
@@ -280,7 +280,7 @@ if st.button("🚀 執行W底策略選股"):
     status_text.text("🎉 W底策略選股完成！")
 
     if not results:
-        st.warning("⚠️ 經過成交量（800張）與W底型態限制篩選後，目前沒有符合標準的標的。")
+        st.warning("⚠️ 經過成交量（500張）與W底型態限制篩選後，目前沒有符合標準的標的。")
         st.session_state["qualified_stocks"] = pd.DataFrame()
     else:
         df_res = pd.DataFrame(results).sort_values(by="成交量(張)", ascending=False).reset_index(drop=True)
