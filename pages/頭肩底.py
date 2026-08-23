@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 
 # 設定 Streamlit 頁面配置
 st.set_page_config(page_title="頭肩底反轉量化選股 Pro", layout="wide")
-st.title("📊 頭肩底反轉量化交易系統（底部突破 + 800張量能過濾）")
+st.title("📊 頭肩底反轉量化交易系統（底部突破 + 500張量能過濾）")
 
 # ==========================================
 # 📦 股票池模組 (自動抓取台股上市/上櫃代號)
@@ -248,7 +248,7 @@ if st.button("🚀 執行頭肩底策略選股"):
                 volume = df["Volume"].iloc[-1]
                 
                 volume_sheets = volume / 1000 
-                if volume_sheets < 800:
+                if volume_sheets < 500:
                     continue
 
                 is_ihs, neckline, head_price = check_inverse_head_and_shoulders(df)
@@ -275,7 +275,7 @@ if st.button("🚀 執行頭肩底策略選股"):
     status_text.text("🎉 頭肩底策略選股完成！")
 
     if not results:
-        st.warning("⚠️ 經過成交量（800張）與頭肩底型態限制篩選後，目前沒有符合標準的標的。")
+        st.warning("⚠️ 經過成交量（500張）與頭肩底型態限制篩選後，目前沒有符合標準的標的。")
         st.session_state["qualified_stocks"] = pd.DataFrame()
     else:
         df_res = pd.DataFrame(results).sort_values(by="成交量(張)", ascending=False).reset_index(drop=True)
