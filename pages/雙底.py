@@ -8,8 +8,8 @@ import matplotlib.pyplot as plt
 from datetime import datetime, timedelta
 
 # 設定 Streamlit 頁面配置
-st.set_page_config(page_title="一字頂反轉量化選股 Pro", layout="wide")
-st.title("📊 一字頂反轉量化交易系統（平頂阻力突破失敗 + 500張量能過濾）")
+st.set_page_config(page_title="W底反轉量化選股 Pro", layout="wide")
+st.title("📊 W底反轉量化交易系統（爆大量雙底 + 突破確認）")
 
 # ==========================================
 # 📦 股票池模組 (自動抓取台股上市/上櫃代號)
@@ -47,62 +47,65 @@ def add_indicators(df):
     return df
 
 # ==========================================
-# 🎯 一字頂 (平頂阻力) 策略條件檢查 (已平衡精準度與條件)
+# 🎯 圖片策略：W底 / 二次打底 + 爆大量突破檢測
 # ==========================================
-def check_flat_top(df):
+def check_w_bottom(df):
     """
-    一字頂（平頂阻力）檢測邏輯：
-    1. 檢視過去 90 天的高點走勢。
-    2. 尋找至少 2 次以上、價格誤差在 2.0% 以內、且間隔 5 天以上的明顯高點。
-    3. 現價貼近一字頂阻力區，且跌破 5MA 出現轉弱訊號。
+    對應圖片策略的 W底 / 二次打底突破檢測邏輯：
+    1. 尋找過去 90 天內的雙底結構（左右兩隻腳價格相近）。
+    2. 檢查底部或突破頸線時是否有「爆大量」（當日成交量大於近期平均量的一定倍數，且超過 500 張）。
+    3. 現價突破頸線，且站上 20MA / 60MA 多頭排列或多頭確認區。
     """
     try:
         if df is None or df.empty or len(df) < 90:
             return False, 0, 0
 
         recent_df = df.iloc[-90:].copy()
-        highs = recent_df["High"].values
         closes = recent_df["Close"].values
         lows = recent_df["Low"].values
+        highs = recent_df["High"].values
+        volumes = recent_df["Volume"].values
+        vol_ma5 = recent_df["vol_ma5"].values
 
-        # 尋找顯著的波段高點（左右各 5 天最高）
-        peaks = []
-        for i in range(5, len(highs)-5):
-            if highs[i] == max(highs[i-5:i+6]):
-                peaks.append((i, highs[i]))
+        # 尋找第一低點
+        mid_len = len(lows) // 2
+        l1_idx = np.argmin(lows[:mid_len])
+        l1_price = lows[l1_idx]
 
-        if len(peaks) < 2:
+        # 尋找中間高點 (頸線)
+        peak_window = highs[l1_idx+5:-15]
+        if len(peak_window) < 5:
             return False, 0, 0
+        peak_idx = np.argmax(peak_window) + l1_idx + 5
+        peak_price = highs[peak_idx]
 
-        # 尋找高點群組 (誤差 2.0%，時間間隔至少 5 天)
-        flat_resistance = 0
-        found = False
-        
-        for i in range(len(peaks)):
-            cluster = [peaks[i]]
-            for j in range(i + 1, len(peaks)):
-                if peaks[j][0] - cluster[-1][0] >= 5: # 間隔 5 天
-                    if abs(peaks[j][1] - cluster[0][1]) / cluster[0][1] <= 0.02: # 誤差 2%
-                        cluster.append(peaks[j])
-            
-            if len(cluster) >= 2:
-                flat_resistance = sum([p[1] for p in cluster]) / len(cluster)
-                found = True
-                break
-
-        if not found:
+        # 尋找第二低點 (第二次打底)
+        l2_window = lows[peak_idx+5:-5]
+        if len(l2_window) < 5:
             return False, 0, 0
+        l2_idx = np.argmin(l2_window) + peak_idx + 5
+        l2_price = lows[l2_idx]
+
+        # 條件 1：兩次低點相近（誤差 5% 內），且中間高點明顯高於低點
+        is_w_shape = (abs(l1_price - l2_price) / l1_price < 0.05) and (peak_price > l1_price * 1.05)
 
         current_price = closes[-1]
-        ma5 = recent_df["ma5"].iloc[-1]
-        
-        # 條件：現價貼近一字頂壓力（阻力價上下 2.5% 內），且跌破 5MA
-        is_near_resistance = (current_price >= flat_resistance * 0.975) and (current_price <= flat_resistance * 1.025)
-        is_weakening = current_price < ma5
+        current_vol = volumes[-1]
+        current_vol_ma5 = vol_ma5[-1]
 
-        if is_near_resistance and is_weakening:
-            support_price = lows[-30:].min()
-            return True, flat_resistance, support_price
+        # 條件 2：現價突破或貼近頸線（容許 3% 內回測或剛突破 8% 內）
+        is_breakout = (current_price >= peak_price * 0.97) and (current_price <= peak_price * 1.08)
+
+        # 條件 3：突破時伴隨「爆大量」（當日成交量大於 5MA 成交量均值的 1.5 倍以上）
+        is_high_volume = current_vol >= (current_vol_ma5 * 1.5)
+
+        # 條件 4：中期趨勢確認，站上 20MA 或 60MA
+        ma20 = recent_df["ma20"].iloc[-1]
+        ma60 = recent_df["ma60"].iloc[-1]
+        is_bullish = (current_price > ma20) or (current_price > ma60)
+
+        if is_w_shape and is_breakout and is_high_volume and is_bullish:
+            return True, peak_price, min(l1_price, l2_price)
 
         return False, 0, 0
     except:
@@ -111,9 +114,9 @@ def check_flat_top(df):
 # ==========================================
 # 💰 進出場策略與風控水位
 # ==========================================
-def trade_levels(price, resistance, support):
-    stop = resistance * 1.02      # 停損設在壓力價上方 2%
-    target = support              # 波段目標看下方近期支撐
+def trade_levels(price, low_price, neckline):
+    stop = low_price * 0.98               # 停損設在雙底最低點下方 2%
+    target = neckline + (neckline - low_price) # 目標價：頸線加上W底高度
     return round(price, 2), round(stop, 2), round(target, 2)
 
 # ==========================================
@@ -223,7 +226,7 @@ def draw_zigzag_chart(ticker_code, stock_name):
 # ==========================================
 # 🚀 盤後選股功能
 # ==========================================
-if st.button("🚀 執行一字頂策略選股"):
+if st.button("🚀 執行爆大量W底突破選股"):
     results = []
     batch_size = 150  
     total_batches = (len(tickers) + batch_size - 1) // batch_size
@@ -231,7 +234,7 @@ if st.button("🚀 執行一字頂策略選股"):
     status_text = st.empty()
 
     for i in range(total_batches):
-        status_text.text(f"正在掃描市場一字頂型態... 進度：{i+1}/{total_batches} 批次")
+        status_text.text(f"正在掃描爆大量W底型態... 進度：{i+1}/{total_batches} 批次")
         batch = tickers[i * batch_size:(i + 1) * batch_size]
         
         try:
@@ -257,21 +260,22 @@ if st.button("🚀 執行一字頂策略選股"):
                 volume = df["Volume"].iloc[-1]
                 
                 volume_sheets = volume / 1000 
+                # 門檻維持最低 500 張以上
                 if volume_sheets < 500:
                     continue
 
-                is_flat, resistance, support = check_flat_top(df)
-                if not is_flat:
+                is_w, neckline, low_price = check_w_bottom(df)
+                if not is_w:
                     continue
 
-                entry, stop, target = trade_levels(price, resistance, support)
+                entry, stop, target = trade_levels(price, low_price, neckline)
 
                 results.append({
                     "代號": ticker_map[t]["code"],
                     "名稱": ticker_map[t]["name"],
                     "ticker": t,
                     "當日收盤": round(price, 2),
-                    "一字頂壓力": round(resistance, 2),
+                    "頸線壓力": round(neckline, 2),
                     "成交量(張)": int(volume_sheets),
                     "建議進場": entry,
                     "防守停損": stop,
@@ -281,10 +285,10 @@ if st.button("🚀 執行一字頂策略選股"):
                 continue
         progress.progress((i + 1) / total_batches)
     
-    status_text.text("🎉 一字頂策略選股完成！")
+    status_text.text("🎉 爆大量W底突破策略選股完成！")
 
     if not results:
-        st.warning("⚠️ 經過一字頂型態與成交量限制篩選後，目前沒有符合標準的標的。")
+        st.warning("⚠️ 經過成交量與爆大量二次打底突破條件篩選後，目前沒有符合標準的標的。")
         st.session_state["qualified_stocks"] = pd.DataFrame()
     else:
         df_res = pd.DataFrame(results).sort_values(by="成交量(張)", ascending=False).reset_index(drop=True)
@@ -296,7 +300,7 @@ if st.button("🚀 執行一字頂策略選股"):
 # ==========================================
 if "qualified_stocks" in st.session_state:
     saved_df = st.session_state["qualified_stocks"]
-    st.subheader(f"📊 一字頂策略精選總名單（共 {len(saved_df)} 檔）")
+    st.subheader(f"📊 策略精選總名單（共 {len(saved_df)} 檔）")
     
     if not saved_df.empty:
         display_df = saved_df.drop(columns=["ticker"])
