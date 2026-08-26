@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 
 # 設定 Streamlit 頁面配置
 st.set_page_config(page_title="碗形底反轉量化選股 Pro", layout="wide")
-st.title("📊 碗形底反轉量化交易系統（升級版圓弧底突破 + 500張量能過濾）")
+st.title("📊 碗形底反轉量化交易系統（拋物線數學擬合版 + 500張量能過濾）")
 
 # ==========================================
 # 📦 股票池模組 (自動抓取台股上市/上櫃代號)
@@ -47,16 +47,15 @@ def add_indicators(df):
     return df
 
 # ==========================================
-# 🎯 升級版：碗形底 (圓弧底) 策略條件檢查
+# 🎯 數學擬合版：碗形底 (圓弧底) 策略條件檢查
 # ==========================================
 def check_bowl_bottom(df):
     """
-    升級版圓弧底（碗形底）檢測邏輯：
-    1. 檢視過去 80 天的 U 型走勢。
-    2. 碗底必須落在區間中段（避開頭尾極端值）。
-    3. 精準計算左右緣高點（Rim），檢查碗深與對稱性。
-    4. 現價突破或正要突破右緣阻力位，且站上 60MA。
-    5. 突破當天需伴隨成交量放大（大於 5MA 均量）。
+    進階數學擬合版：圓弧底（碗形底）檢測邏輯
+    1. 擷取過去 80 天的收盤價走勢。
+    2. 使用二次多項式擬合（Polyfit），檢查其是否為標準的「開口向上拋物線（U型）」。
+    3. 檢查拋物線頂點（碗底）是否落在區間中段（避開頭尾）。
+    4. 檢查右緣是否已經接近或突破阻力，且站上 60MA，並伴隨突破量。
     """
     try:
         if df is None or df.empty or len(df) < 80:
@@ -64,40 +63,47 @@ def check_bowl_bottom(df):
 
         recent_df = df.iloc[-80:].copy()
         closes = recent_df["Close"].values
-        lows = recent_df["Low"].values
         volumes = recent_df["Volume"].values
 
-        # 1. 尋找碗底（最低點必須落在區間的 20% ~ 80% 之間，排除頭尾）
-        valid_lows = lows[16:-16]
-        if len(valid_lows) == 0:
-            return False, 0, 0
-        
-        min_idx = np.argmin(valid_lows) + 16
-        bowl_bottom = lows[min_idx]
+        # 1. 數據歸一化（將 X 軸縮放至 0~1，Y 軸以平均價為基底，避免數值過大影響擬合）
+        x = np.linspace(0, 1, len(closes))
+        y = closes / np.mean(closes)
 
-        # 2. 定義左緣與右緣的真實高點區域
-        left_rim = np.max(closes[:min_idx - 5]) if min_idx > 10 else closes[0]
-        right_rim = np.max(closes[min_idx + 5:-2]) if len(closes) - min_idx > 7 else closes[-1]
+        # 2. 進行二次多項式擬合 (y = a*x^2 + b*x + c)
+        coeffs = np.polyfit(x, y, 2)
+        a, b, c = coeffs
+
+        # 條件 1：U 型核心特徵 —— 二次項係數 a 必須大於 0（代表開口向上，呈現漂亮的 ∪ 型）
+        if a <= 0:
+            return False, 0, 0
+
+        # 3. 計算拋物線的頂點位置 (x_vertex = -b / (2a))
+        # 碗底必須落在區間的中段（30% ~ 70% 之間，不能偏向太左或太右）
+        x_vertex = -b / (2 * a)
+        if not (0.3 <= x_vertex <= 0.7):
+            return False, 0, 0
+
+        # 4. 尋找實際價格的左右緣與碗底
+        min_idx = np.argmin(closes)
+        bowl_bottom = closes[min_idx]
+        left_rim = np.max(closes[:20])
+        right_rim = np.max(closes[-25:])
         current_price = closes[-1]
 
-        # 3. 嚴格形狀檢查：
-        # - 碗底必須明顯低於左右緣 (低於左右緣高點的 92% 以下)
-        is_deep_enough = (bowl_bottom < left_rim * 0.92) and (bowl_bottom < right_rim * 0.92)
+        # 條件 2：碗深足夠且右緣高度合理
+        is_deep_enough = (bowl_bottom < left_rim * 0.93) and (bowl_bottom < right_rim * 0.93)
         
-        # - 右緣高度不應比左緣崩落太多 (確保型態對稱與打底完整)
-        is_symmetric = right_rim >= left_rim * 0.80
-
-        # 4. 突破確認：現價貼近或剛突破右緣 (容許 -2% 回測到 +8% 突破)，且站上 60MA
+        # 條件 3：突破確認（現價接近或剛突破右緣，且站上 60MA）
         ma60 = recent_df["ma60"].iloc[-1]
         is_breakout = (current_price >= right_rim * 0.98) and (current_price <= right_rim * 1.08)
         is_above_ma60 = current_price > ma60
 
-        # 5. 量能條件：當日成交量必須放大，大於 5MA 均量
+        # 條件 4：突破當天必須量增（大於 5MA 均量）
         vol_ma5 = recent_df["vol_ma5"].iloc[-1]
         current_vol = volumes[-1]
-        is_volume_confirmed = current_vol > vol_ma5 * 1.1
+        is_volume_confirmed = current_vol > vol_ma5 * 1.15
 
-        if is_deep_enough and is_symmetric and is_breakout and is_above_ma60 and is_volume_confirmed:
+        if is_deep_enough and is_breakout and is_above_ma60 and is_volume_confirmed:
             return True, right_rim, bowl_bottom
 
         return False, 0, 0
@@ -219,7 +225,7 @@ def draw_zigzag_chart(ticker_code, stock_name):
 # ==========================================
 # 🚀 盤後選股功能
 # ==========================================
-if st.button("🚀 執行升級版碗形底策略選股"):
+if st.button("🚀 執行數學擬合碗形底策略選股"):
     results = []
     batch_size = 150  
     total_batches = (len(tickers) + batch_size - 1) // batch_size
@@ -227,7 +233,7 @@ if st.button("🚀 執行升級版碗形底策略選股"):
     status_text = st.empty()
 
     for i in range(total_batches):
-        status_text.text(f"正在掃描市場圓弧底型態... 進度：{i+1}/{total_batches} 批次")
+        status_text.text(f"正在以拋物線數學模型掃描碗形底... 進度：{i+1}/{total_batches} 批次")
         batch = tickers[i * batch_size:(i + 1) * batch_size]
         
         try:
@@ -280,7 +286,7 @@ if st.button("🚀 執行升級版碗形底策略選股"):
     status_text.text("🎉 碗形底策略選股完成！")
 
     if not results:
-        st.warning("⚠️ 經過成交量（500張）與嚴格碗形底型態限制篩選後，目前沒有符合標準的標的。")
+        st.warning("⚠️ 經過成交量與嚴格拋物線 U 型擬合篩選後，目前沒有符合標準的標的（這代表標準較嚴格，線型會更漂亮）。")
         st.session_state["qualified_stocks"] = pd.DataFrame()
     else:
         df_res = pd.DataFrame(results).sort_values(by="成交量(張)", ascending=False).reset_index(drop=True)
