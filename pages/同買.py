@@ -19,7 +19,7 @@ def get_chip_data(start_date: str):
     )
     return df_institutional
 
-# 建立按鈕讓使用者手動點擊執行（避免每次開網頁自動重抓被限流）
+# 建立按鈕讓使用者手動點擊執行
 if st.button("開始篩選 5、10、15 日法人同買股票"):
     with st.spinner("正在下載三大法人資料並計算中，請稍候..."):
         start_date = "2026-08-01" 
@@ -67,6 +67,5 @@ if st.button("開始篩選 5、10、15 日法人同買股票"):
             st.success(f"篩選完成！截至日期：{latest_date}")
             st.write(f"符合 5、10、15 日外資與投信皆買超的股票共 {len(results)} 檔：")
             
-            # 在網頁上呈現互動式表格
             st.dataframe(results[['stock_id', 'Foreign_Sum_5', 'Foreign_Sum_10', 'Foreign_Sum_15', 
                                   'Investment_Trust_Sum_5', 'Investment_Trust_Sum_10', 'Investment_Trust_Sum_15']])
