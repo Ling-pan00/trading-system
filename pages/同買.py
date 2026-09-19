@@ -1,71 +1,156 @@
 import streamlit as st
 import pandas as pd
-from FinMind.data import DataLoader
+import requests
+from datetime import datetime, timedelta
+import time
 
-# 網頁標題
-st.title("台股外資、投信同買篩選器")
+st.set_page_config(page_title="三大法人同步鎖碼股 V9.3", layout="wide")
+st.title("🔥 三大法人（外資＋投信＋主力）同步鎖碼選股系統")
 
-# 初始化 FinMind
-@st.cache_resource
-def get_dataloader():
-    return DataLoader()
+# =========================
+# 📦 抓取 TWSE 三大法人日報 (T86)
+# =========================
+def get_institutional_day(date):
+    url = f"https://www.twse.com.tw/exchangeReport/T86?date={date}&selectType=ALL&response=json"
+    try:
+        r = requests.get(url, timeout=10)
+        data = r.json()
 
-dl = get_dataloader()
+        if data.get("stat") != "OK" or not data.get("data"):
+            return None
 
-@st.cache_data
-def get_chip_data(start_date: str):
-    df_institutional = dl.taiwan_stock_institutional_investors(
-        start_date=start_date
-    )
-    return df_institutional
+        df = pd.DataFrame(data["data"], columns=data["fields"])
+        df["date"] = date
+        return df
+    except:
+        return None
 
-# 建立按鈕讓使用者手動點擊執行
-if st.button("開始篩選 5、10、15 日法人同買股票"):
-    with st.spinner("正在下載三大法人資料並計算中，請稍候..."):
-        start_date = "2026-08-01" 
-        df = get_chip_data(start_date)
+# =========================
+# 📅 多日歷史資料載入
+# =========================
+def load_institutional_data(days=20):
+    all_df = []
+    today = datetime.today()
+
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    
+    loaded_days = 0
+    target_days = days
+    
+    for i in range(days * 2):
+        d = (today - timedelta(days=i)).strftime("%Y%m%d")
+        status_text.text(f"正在載入日期: {d} 的三大法人籌碼...")
         
-        if df.empty:
-            st.warning("無法取得資料，請檢查網路或 API 限制。")
-        else:
-            institutions = ['Foreign_Investor', 'Investment_Trust']
-            df_filtered = df[df['name'].isin(institutions)].copy()
-            
-            df_filtered['net'] = df_filtered['buy'] - df_filtered['sell']
-            
-            pivot_df = df_filtered.pivot_table(
-                index=['date', 'stock_id'], 
-                columns='name', 
-                values='net', 
-                aggfunc='sum'
-            ).reset_index()
-            
-            for col in ['Foreign_Investor', 'Investment_Trust']:
-                if col not in pivot_df.columns:
-                    pivot_df[col] = 0
+        df = get_institutional_day(d)
+        if df is not None and not df.empty:
+            all_df.append(df)
+            loaded_days += 1
+            progress_bar.progress(min(loaded_days / target_days, 1.0))
 
-            pivot_df = pivot_df.sort_values(['stock_id', 'date'])
-            
-            for days in [5, 10, 15]:
-                pivot_df[f'Foreign_Sum_{days}'] = pivot_df.groupby('stock_id']['Foreign_Investor'].rolling(days, min_periods=days).sum().reset_index(0, drop=True)
-                pivot_df[f'Investment_Trust_Sum_{days}'] = pivot_df.groupby('stock_id']['Investment_Trust'].rolling(days, min_periods=days).sum().reset_index(0, drop=True)
+        time.sleep(0.05)
+        if loaded_days >= target_days:
+            break
 
-            latest_date = pivot_df['date'].max()
-            latest_data = pivot_df[pivot_df['date'] == latest_date]
+    status_text.empty()
+    progress_bar.empty()
+
+    if not all_df:
+        return pd.DataFrame()
+
+    return pd.concat(all_df, ignore_index=True)
+
+# =========================
+# 🔍 欄位智慧偵測模組
+# =========================
+def find_col(df, keywords):
+    for c in df.columns:
+        for k in keywords:
+            if k in str(c):
+                return c
+    return None
+
+# =========================
+# 🚀 執行主按鈕
+# =========================
+if st.button("🚀 開始掃描三大法人同步鎖碼標的"):
+    
+    df = load_institutional_data(20)
+
+    if df.empty:
+        st.error("⚠️ 未能取得法人資料，請檢查網路或稍後再試。")
+        st.stop()
+
+    # 動態對應官方欄位名稱（避免大小寫或微調字串導致抓不到）
+    stock_col = find_col(df, ["證券代號"])
+    name_col = find_col(df, ["證券名稱"])
+    foreign_col = find_col(df, ["外陸資買賣超股數(不含外資自營商)", "外資買賣超"])
+    trust_col = find_col(df, ["投信買賣超股數", "投信買賣超"])
+    dealer_col = find_col(df, ["自營商買賣超股數", "自營商買賣超"])
+
+    if not stock_col or not foreign_col or not trust_col:
+        st.error(f"❌ 欄位解析失敗！現有欄位：{list(df.columns)}")
+        st.stop()
+
+    # 數據清洗：移除千分位逗號與特殊符號
+    for col in [foreign_col, trust_col, dealer_col]:
+        if col and col in df.columns:
+            df[col] = df[col].astype(str).str.replace(",", "").str.replace("—", "0").str.replace("-", "0")
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+
+    result = []
+
+    # =========================
+    # 🔥 籌碼共振與鎖碼核心運算
+    # =========================
+    for stock, g in df.groupby(stock_col):
+        try:
+            g = g.sort_values("date")
+            s_name = g[name_col].iloc[-1] if name_col else ""
+
+            f_series = g[foreign_col].values if foreign_col else [0]*len(g)
+            t_series = g[trust_col].values if trust_col else [0]*len(g)
+            d_series = g[dealer_col].values if dealer_col and dealer_col in g.columns else [0]*len(g)
+
+            if len(f_series) < 5:
+                continue
+
+            # 計算近 3 日與近 10 日動向
+            f_last3 = f_series[-3:].sum()
+            t_last3 = t_series[-3:].sum()
+            d_last3 = d_series[-3:].sum() if dealer_col else 0
+
+            f_last10 = f_series[-10:].sum()
+            t_last10 = t_series[-10:].sum()
             
-            condition = (
-                (latest_data['Foreign_Sum_5'] > 0) & 
-                (latest_data['Foreign_Sum_10'] > 0) & 
-                (latest_data['Foreign_Sum_15'] > 0) &
-                (latest_data['Investment_Trust_Sum_5'] > 0) & 
-                (latest_data['Investment_Trust_Sum_10'] > 0) & 
-                (latest_data['Investment_Trust_Sum_15'] > 0)
-            )
-            
-            results = latest_data[condition]
-            
-            st.success(f"篩選完成！截至日期：{latest_date}")
-            st.write(f"符合 5、10、15 日外資與投信皆買超的股票共 {len(results)} 檔：")
-            
-            st.dataframe(results[['stock_id', 'Foreign_Sum_5', 'Foreign_Sum_10', 'Foreign_Sum_15', 
-                                  'Investment_Trust_Sum_5', 'Investment_Trust_Sum_10', 'Investment_Trust_Sum_15']])
+            total_last3 = f_last3 + t_last3 + d_last3
+
+            # 🎯 核心過濾條件：外資近3日買超 > 0 且 投信近3日買超 > 0（法人同步同買），且中期投信方向偏多
+            if f_last3 > 0 and t_last3 > 0 and t_last10 > 0:
+                
+                # 綜合強度評分（加重投信籌碼權重）
+                strength = (t_last3 * 2 + f_last3) / 1000
+
+                result.append({
+                    "代號": stock,
+                    "名稱": s_name,
+                    "綜合強度": round(strength, 2),
+                    "近3日外資買超(股)": int(f_last3),
+                    "近3日投信買超(股)": int(t_last3),
+                    "近3日自營商買超(股)": int(d_last3),
+                    "近3日三大法人合計(股)": int(total_last3),
+                    "近10日投信累積(股)": int(t_last10)
+                })
+        except:
+            continue
+
+    out = pd.DataFrame(result)
+
+    if out.empty:
+        st.warning("⚠️ 目前市場沒有符合「外資＋投信同步同買」條件的標的（可能近期盤勢較為觀望）。")
+        st.stop()
+
+    out = out.sort_values("綜合強度", ascending=False).reset_index(drop=True)
+
+    st.success(f"🎉 篩選完成！共找到 {len(out)} 檔三大法人同步鎖碼標的：")
+    st.dataframe(out, use_container_width=True)
