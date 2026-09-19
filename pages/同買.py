@@ -25,12 +25,7 @@ def filter_stocks():
         print("無法取得資料，請檢查網路或 API 限制。")
         return
 
-    # 欄位整理：stock_id, date, name (外資/投信/自營商), buy, sell
-    # 這裡以外資 (Foreign_Investor)、投信 (Investment_Trust) 為例
-    # 將資料轉換為寬表格以便計算移動加總
-    
     # 篩選出需要的法人別
-    # FinMind 的 name 常見如: 'Foreign_Investor', 'Investment_Trust'
     institutions = ['Foreign_Investor', 'Investment_Trust']
     df_filtered = df[df['name'].isin(institutions)].copy()
     
@@ -45,28 +40,36 @@ def filter_stocks():
         aggfunc='sum'
     ).reset_index()
     
+    # 確保欄位存在，若某些股票當天無該法人資料則補 0
+    for col in ['Foreign_Investor', 'Investment_Trust']:
+        if col not in pivot_df.columns:
+            pivot_df[col] = 0
+
     pivot_df = pivot_df.sort_values(['stock_id', 'date'])
     
-    # 計算 5日、10日、15日滾動加總 (Rolling Sum)
-    # 依 stock_id 分組計算 rolling
+    # 分別計算外資與投信的 5日、10日、15日滾動加總 (Rolling Sum)
     for days in [5, 10, 15]:
         pivot_df[f'Foreign_Sum_{days}'] = pivot_df.groupby('stock_id']['Foreign_Investor'].rolling(days, min_periods=days).sum().reset_index(0, drop=True)
-        pivot_df[f'Foreign_Sum_{days}'] = pivot_df.groupby('stock_id']['Investment_Trust'].rolling(days, min_periods=days).sum().reset_index(0, drop=True)
+        pivot_df[f'Investment_Trust_Sum_{days}'] = pivot_df.groupby('stock_id']['Investment_Trust'].rolling(days, min_periods=days).sum().reset_index(0, drop=True)
 
     # 取最新一個交易日來檢查
     latest_date = pivot_df['date'].max()
     latest_data = pivot_df[pivot_df['date'] == latest_date]
     
-    # 篩選 5、10、15 日外資與投信皆為正數的股票
-    # （若要把「主力」加入，可透過計算買賣超張數或特定主力券商集保戶股權分散表來定義）
+    # 正確篩選：5、10、15 日「外資」與「投信」皆大於 0 的股票
     condition = (
-        (latest_data['Foreign_Sum_5'] > 0) & (latest_data['Foreign_Sum_10'] > 0) & (latest_data['Foreign_Sum_15'] > 0) &
-        (latest_data['Foreign_Sum_5'] > 0) & (latest_data['Foreign_Sum_10'] > 0) & (latest_data['Foreign_Sum_15'] > 0)
+        (latest_data['Foreign_Sum_5'] > 0) & 
+        (latest_data['Foreign_Sum_10'] > 0) & 
+        (latest_data['Foreign_Sum_15'] > 0) &
+        (latest_data['Investment_Trust_Sum_5'] > 0) & 
+        (latest_data['Investment_Trust_Sum_10'] > 0) & 
+        (latest_data['Investment_Trust_Sum_15'] > 0)
     )
     
     results = latest_data[condition]
     print(f"符合 5、10、15 日外資投信同買的股票清單（截至 {latest_date}）：")
-    print(results[['stock_id', 'Foreign_Sum_5', 'Foreign_Sum_10', 'Foreign_Sum_15']])
+    print(results[['stock_id', 'Foreign_Sum_5', 'Foreign_Sum_10', 'Foreign_Sum_15', 
+                   'Investment_Trust_Sum_5', 'Investment_Trust_Sum_10', 'Investment_Trust_Sum_15']])
 
 if __name__ == "__main__":
     filter_stocks()
