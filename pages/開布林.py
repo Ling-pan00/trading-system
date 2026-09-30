@@ -1,4 +1,4 @@
-import streamlit as st
+ import streamlit as st
 import pandas as pd
 import yfinance as yf
 import twstock
@@ -41,10 +41,10 @@ st.write(f"📦 **目前監測台股總數：{len(tickers)} 檔**（已自動過
 def add_indicators(df):
     df = df.copy()
     df["ma5"] = df["Close"].rolling(5).mean()
+    df["ma10"] = df["Close"].rolling(10).mean()
     df["ma20"] = df["Close"].rolling(20).mean()
-    df["ma60"] = df["Close"].rolling(60).mean()
     
-    # 計算布林通道 (Bollinger Bands, 20日, 2倍標準差)
+    # 計算布林通道 (Bollinger Bands, 用於選股與風控)
     std20 = df["Close"].rolling(20).std()
     df["b_upper"] = df["ma20"] + (std20 * 2)
     df["b_middle"] = df["ma20"]
@@ -60,21 +60,21 @@ def check_bollinger_breakout(df):
     """
     布林通道突破策略檢測邏輯：
     1. 當前收盤價向上突破或貼近布林上軌（Close >= b_upper * 0.98）。
-    2. 收盤價必須大於 60 日均線（確認中長期多頭趨勢）。
+    2. 收盤價必須大於 20 日均線（確認短中期多頭趨勢）。
     """
     try:
-        if df is None or df.empty or len(df) < 60:
+        if df is None or df.empty or len(df) < 20:
             return False, 0, 0
 
         current_price = df["Close"].iloc[-1]
         upper_band = df["b_upper"].iloc[-1]
         lower_band = df["b_lower"].iloc[-1]
-        ma60 = df["ma60"].iloc[-1]
+        ma20 = df["ma20"].iloc[-1]
 
-        is_above_ma60 = current_price > ma60
+        is_above_ma20 = current_price > ma20
         is_breakout = current_price >= (upper_band * 0.98)
 
-        if is_above_ma60 and is_breakout:
+        if is_above_ma20 and is_breakout:
             return True, upper_band, lower_band
 
         return False, 0, 0
@@ -91,9 +91,9 @@ def trade_levels(price, upper_band, lower_band):
     return entry, stop, target
 
 # ==========================================
-# 🎨 帶有布林通道的標準 K 線圖繪製模組
+# 🎨 轉折 K 線圖與高低點標註繪製模組 (5MA / 10MA / 20MA)
 # ==========================================
-def draw_bollinger_candle_chart(ticker_code, stock_name):
+def draw_zigzag_chart(ticker_code, stock_name):
     end_date = datetime.today().strftime('%Y-%m-%d')
     start_date = (datetime.today() - timedelta(days=150)).strftime('%Y-%m-%d')
     
@@ -106,21 +106,44 @@ def draw_bollinger_candle_chart(ticker_code, stock_name):
     if isinstance(df_chart.columns, pd.MultiIndex):
         df_chart.columns = df_chart.columns.get_level_values(0)
 
-    df_chart = add_indicators(df_chart)
+    df_chart['5MA'] = df_chart['Close'].rolling(window=5).mean()
+    df_chart['10MA'] = df_chart['Close'].rolling(window=10).mean()
+    df_chart['20MA'] = df_chart['Close'].rolling(window=20).mean()
 
     df_chart['Close'] = pd.to_numeric(df_chart['Close'], errors='coerce')
     df_chart['High'] = pd.to_numeric(df_chart['High'], errors='coerce')
     df_chart['Low'] = pd.to_numeric(df_chart['Low'], errors='coerce')
 
-    df_chart = df_chart.dropna(subset=['Close', 'b_upper', 'b_middle', 'b_lower']).copy()
+    df_chart = df_chart.dropna(subset=['Close', '5MA', '10MA', '20MA']).copy()
 
-    def get_indicator_details(col_name):
+    # 計算轉折點 (Zigzag H/B)
+    df_chart['State'] = np.where(df_chart['Close'] > df_chart['5MA'], 1, -1)
+    df_chart['State_Group'] = (df_chart['State'] != df_chart['State'].shift()).cumsum()
+
+    zigzag_points = []
+    grouped = df_chart.groupby('State_Group')
+    group_ids = sorted(df_chart['State_Group'].unique())
+
+    for g_id in group_ids:
+        group_data = grouped.get_group(g_id)
+        state = group_data['State'].iloc[0]
+        if g_id <= 2: continue
+        if state == 1:
+            highest_idx = group_data['High'].idxmax()
+            zigzag_points.append((df_chart.index.get_loc(highest_idx), df_chart.loc[highest_idx, 'High']))
+            df_chart.loc[highest_idx, 'Label'] = "H"
+        else:
+            lowest_idx = group_data['Low'].idxmin()
+            zigzag_points.append((df_chart.index.get_loc(lowest_idx), df_chart.loc[lowest_idx, 'Low']))
+            df_chart.loc[lowest_idx, 'Label'] = "B"
+
+    def get_ma_details(col_name):
         now = df_chart[col_name].iloc[-1]
         pre = df_chart[col_name].iloc[-2]
         arrow = "▲" if now >= pre else "▼"
         return f"{now:.2f} {arrow}"
 
-    st.markdown(f"#### 📈 {stock_name} ({ticker_code}) — 布林通道 K 線圖")
+    st.markdown(f"#### 📈 {stock_name} ({ticker_code}) — 5MA/10MA/20MA 轉折波段圖")
     st.markdown(f"""
         <div style="
             background-color: #f8f9fa; 
@@ -131,22 +154,21 @@ def draw_bollinger_candle_chart(ticker_code, stock_name):
             font-family: monospace; 
             font-size: 14px; 
             font-weight: bold;
-            border-left: 5px solid #2196F3;
+            border-left: 5px solid #6c757d;
         ">
-            <span style="color: #E91E63; margin-right: 15px;">布林上軌: {get_indicator_details('b_upper')}</span>
-            <span style="color: #9C27B0; margin-right: 15px;">布林中軌: {get_indicator_details('b_middle')}</span>
-            <span style="color: #4CAF50; margin-right: 15px;">布林下軌: {get_indicator_details('b_lower')}</span>
+            <span style="color: #FF9800; margin-right: 15px;">5MA: {get_ma_details('5MA')}</span>
+            <span style="color: #2196F3; margin-right: 15px;">10MA: {get_ma_details('10MA')}</span>
+            <span style="color: #9C27B0;">20MA: {get_ma_details('20MA')}</span>
         </div>
     """, unsafe_allow_html=True)
 
     mc = mpf.make_marketcolors(up='red', down='green', edge='inherit', wick='inherit', volume='in')
     s_style = mpf.make_mpf_style(marketcolors=mc, gridstyle='--')
 
-    # 設定在 K 線圖上疊加布林通道三條線
     plots = [
-        mpf.make_addplot(df_chart['b_upper'], color='crimson', width=1.2, label='Upper Band'),
-        mpf.make_addplot(df_chart['b_middle'], color='purple', width=1, label='Middle Band'),
-        mpf.make_addplot(df_chart['b_lower'], color='forestgreen', width=1.2, label='Lower Band')
+        mpf.make_addplot(df_chart['5MA'], color='orange', width=1),
+        mpf.make_addplot(df_chart['10MA'], color='blue', width=1),
+        mpf.make_addplot(df_chart['20MA'], color='purple', width=1.2)
     ]
 
     fig, axlist = mpf.plot(
@@ -155,6 +177,20 @@ def draw_bollinger_candle_chart(ticker_code, stock_name):
         panel_ratios=(4,1)
     )
     
+    main_ax = axlist[0]
+
+    if len(zigzag_points) > 1:
+        x_coords, y_coords = zip(*zigzag_points)
+        main_ax.plot(x_coords, y_coords, color='black', alpha=0.5, linewidth=1.5, zorder=3)
+
+    for idx, row in df_chart[df_chart['Label'].notnull()].iterrows():
+        x = df_chart.index.get_loc(idx)
+        is_h = row['Label'] == "H"
+        main_ax.text(x, row['High' if is_h else 'Low'], row['Label'],
+                    color='red' if is_h else 'green', weight='bold',
+                    ha='center', va='bottom' if is_h else 'top',
+                    bbox=dict(boxstyle="circle,pad=0.1", fc="yellow", ec="none", alpha=0.6))
+
     st.pyplot(fig)
     plt.close(fig)
 
@@ -187,7 +223,7 @@ if st.button("🚀 執行布林突破策略選股"):
                 else:
                     df = data.dropna(subset=["Close"])
 
-                if df.empty or len(df) < 60:
+                if df.empty or len(df) < 20:
                     continue
 
                 df = add_indicators(df)
@@ -284,6 +320,6 @@ if "qualified_stocks" in st.session_state:
         final_idx = st.session_state["stock_idx"]
         target_row = saved_df.iloc[final_idx]
         
-        draw_bollinger_candle_chart(target_row["ticker"], target_row["名稱"])
+        draw_zigzag_chart(target_row["ticker"], target_row["名稱"])
     else:
         st.info("目前無符合條件股票")
