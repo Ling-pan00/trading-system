@@ -61,7 +61,6 @@ def check_bollinger_breakout(df):
     布林通道突破策略檢測邏輯：
     1. 當前收盤價向上突破或貼近布林上軌（Close >= b_upper * 0.98）。
     2. 收盤價必須大於 60 日均線（確認中長期多頭趨勢）。
-    3. 通道帶寬適度收斂後擴張（可選，此處主要檢查突破與站上 MA60）。
     """
     try:
         if df is None or df.empty or len(df) < 60:
@@ -72,10 +71,7 @@ def check_bollinger_breakout(df):
         lower_band = df["b_lower"].iloc[-1]
         ma60 = df["ma60"].iloc[-1]
 
-        # 條件 1：站上 60 日均線
         is_above_ma60 = current_price > ma60
-
-        # 條件 2：突破或緊貼布林上軌 (例如接近上軌 2% 以內或帶量突破)
         is_breakout = current_price >= (upper_band * 0.98)
 
         if is_above_ma60 and is_breakout:
@@ -90,21 +86,21 @@ def check_bollinger_breakout(df):
 # ==========================================
 def trade_levels(price, upper_band, lower_band):
     entry = round(price, 2)
-    stop = round(lower_band, 2)  # 停損設在布林下軌或中軌防守
-    target = round(price + (price - lower_band), 2)  # 依波動幅度計算波段目標價
+    stop = round(lower_band, 2)  
+    target = round(price + (price - lower_band), 2)  
     return entry, stop, target
 
 # ==========================================
-# 🎨 轉折 K 線圖與布林通道繪製模組
+# 🎨 帶有布林通道的標準 K 線圖繪製模組
 # ==========================================
-def draw_zigzag_chart(ticker_code, stock_name):
+def draw_bollinger_candle_chart(ticker_code, stock_name):
     end_date = datetime.today().strftime('%Y-%m-%d')
     start_date = (datetime.today() - timedelta(days=150)).strftime('%Y-%m-%d')
     
     df_chart = yf.download(ticker_code, start=start_date, end=end_date, progress=False)
     
     if df_chart.empty:
-        st.error(f"⚠️️ 無法取得 {stock_name}({ticker_code}) 的圖表數據。")
+        st.error(f"⚠️ 無法取得 {stock_name}({ticker_code}) 的圖表數據。")
         return
 
     if isinstance(df_chart.columns, pd.MultiIndex):
@@ -118,34 +114,13 @@ def draw_zigzag_chart(ticker_code, stock_name):
 
     df_chart = df_chart.dropna(subset=['Close', 'b_upper', 'b_middle', 'b_lower']).copy()
 
-    # 計算轉折點 (Zigzag H/B)
-    df_chart['State'] = np.where(df_chart['Close'] > df_chart['ma5'], 1, -1)
-    df_chart['State_Group'] = (df_chart['State'] != df_chart['State'].shift()).cumsum()
-
-    zigzag_points = []
-    grouped = df_chart.groupby('State_Group')
-    group_ids = sorted(df_chart['State_Group'].unique())
-
-    for g_id in group_ids:
-        group_data = grouped.get_group(g_id)
-        state = group_data['State'].iloc[0]
-        if g_id <= 2: continue
-        if state == 1:
-            highest_idx = group_data['High'].idxmax()
-            zigzag_points.append((df_chart.index.get_loc(highest_idx), df_chart.loc[highest_idx, 'High']))
-            df_chart.loc[highest_idx, 'Label'] = "H"
-        else:
-            lowest_idx = group_data['Low'].idxmin()
-            zigzag_points.append((df_chart.index.get_loc(lowest_idx), df_chart.loc[lowest_idx, 'Low']))
-            df_chart.loc[lowest_idx, 'Label'] = "B"
-
     def get_indicator_details(col_name):
         now = df_chart[col_name].iloc[-1]
         pre = df_chart[col_name].iloc[-2]
         arrow = "▲" if now >= pre else "▼"
         return f"{now:.2f} {arrow}"
 
-    st.markdown(f"#### 📈 {stock_name} ({ticker_code}) — 布林通道突破圖")
+    st.markdown(f"#### 📈 {stock_name} ({ticker_code}) — 布林通道 K 線圖")
     st.markdown(f"""
         <div style="
             background-color: #f8f9fa; 
@@ -167,10 +142,11 @@ def draw_zigzag_chart(ticker_code, stock_name):
     mc = mpf.make_marketcolors(up='red', down='green', edge='inherit', wick='inherit', volume='in')
     s_style = mpf.make_mpf_style(marketcolors=mc, gridstyle='--')
 
+    # 設定在 K 線圖上疊加布林通道三條線
     plots = [
-        mpf.make_addplot(df_chart['b_upper'], color='red', width=1, alpha=0.7),
-        mpf.make_addplot(df_chart['b_middle'], color='purple', width=1, alpha=0.7),
-        mpf.make_addplot(df_chart['b_lower'], color='green', width=1, alpha=0.7)
+        mpf.make_addplot(df_chart['b_upper'], color='crimson', width=1.2, label='Upper Band'),
+        mpf.make_addplot(df_chart['b_middle'], color='purple', width=1, label='Middle Band'),
+        mpf.make_addplot(df_chart['b_lower'], color='forestgreen', width=1.2, label='Lower Band')
     ]
 
     fig, axlist = mpf.plot(
@@ -179,20 +155,6 @@ def draw_zigzag_chart(ticker_code, stock_name):
         panel_ratios=(4,1)
     )
     
-    main_ax = axlist[0]
-
-    if len(zigzag_points) > 1:
-        x_coords, y_coords = zip(*zigzag_points)
-        main_ax.plot(x_coords, y_coords, color='black', alpha=0.3, linewidth=1, zorder=3)
-
-    for idx, row in df_chart[df_chart['Label'].notnull()].iterrows():
-        x = df_chart.index.get_loc(idx)
-        is_h = row['Label'] == "H"
-        main_ax.text(x, row['High' if is_h else 'Low'], row['Label'],
-                    color='red' if is_h else 'green', weight='bold',
-                    ha='center', va='bottom' if is_h else 'top',
-                    bbox=dict(boxstyle="circle,pad=0.1", fc="yellow", ec="none", alpha=0.6))
-
     st.pyplot(fig)
     plt.close(fig)
 
@@ -322,6 +284,6 @@ if "qualified_stocks" in st.session_state:
         final_idx = st.session_state["stock_idx"]
         target_row = saved_df.iloc[final_idx]
         
-        draw_zigzag_chart(target_row["ticker"], target_row["名稱"])
+        draw_bollinger_candle_chart(target_row["ticker"], target_row["名稱"])
     else:
         st.info("目前無符合條件股票")
